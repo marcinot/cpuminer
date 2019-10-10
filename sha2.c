@@ -10,9 +10,11 @@
 
 #include "cpuminer-config.h"
 #include "miner.h"
-
+#include "kjv.h"
 #include <string.h>
 #include <inttypes.h>
+#include <unistd.h>
+
 
 #if defined(USE_ASM) && \
 	(defined(__x86_64__) || \
@@ -20,6 +22,7 @@
 	 (defined(__powerpc__) || defined(__ppc__) || defined(__PPC__)))
 #define EXTERN_SHA256
 #endif
+extern bool fDebug;
 
 static const uint32_t sha256_h[8] = {
 	0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
@@ -360,7 +363,7 @@ static inline void sha256d_ms(uint32_t *hash, uint32_t *W,
 
 	for (i = 0; i < 8; i++)
 		S[i] += midstate[i];
-	
+
 	W[18] = S[18];
 	W[19] = S[19];
 	W[20] = S[20];
@@ -369,7 +372,7 @@ static inline void sha256d_ms(uint32_t *hash, uint32_t *W,
 	W[24] = S[24];
 	W[30] = S[30];
 	W[31] = S[31];
-	
+
 	memcpy(S + 8, sha256d_hash1 + 8, 32);
 	S[16] = s1(sha256d_hash1[14]) + sha256d_hash1[ 9] + s0(S[ 1]) + S[ 0];
 	S[17] = s1(sha256d_hash1[15]) + sha256d_hash1[10] + s0(S[ 2]) + S[ 1];
@@ -452,7 +455,7 @@ static inline void sha256d_ms(uint32_t *hash, uint32_t *W,
 	RNDr(hash, S, 54);
 	RNDr(hash, S, 55);
 	RNDr(hash, S, 56);
-	
+
 	hash[2] += hash[6] + S1(hash[3]) + Ch(hash[3], hash[4], hash[5])
 	         + S[57] + sha256_k[57];
 	hash[1] += hash[5] + S1(hash[2]) + Ch(hash[2], hash[3], hash[4])
@@ -482,13 +485,13 @@ static inline int scanhash_sha256d_4way(int thr_id, uint32_t *pdata,
 	const uint32_t first_nonce = pdata[19];
 	const uint32_t Htarg = ptarget[7];
 	int i, j;
-	
+
 	memcpy(data, pdata + 16, 64);
 	sha256d_preextend(data);
 	for (i = 31; i >= 0; i--)
 		for (j = 0; j < 4; j++)
 			data[i * 4 + j] = data[i];
-	
+
 	sha256_init(midstate);
 	sha256_transform(midstate, pdata, 0);
 	memcpy(prehash, midstate, 32);
@@ -499,13 +502,13 @@ static inline int scanhash_sha256d_4way(int thr_id, uint32_t *pdata,
 			prehash[i * 4 + j] = prehash[i];
 		}
 	}
-	
+
 	do {
 		for (i = 0; i < 4; i++)
 			data[4 * 3 + i] = ++n;
-		
+
 		sha256d_ms_4way(hash, data, midstate, prehash);
-		
+
 		for (i = 0; i < 4; i++) {
 			if (swab32(hash[4 * 7 + i]) <= Htarg) {
 				pdata[19] = data[4 * 3 + i];
@@ -517,7 +520,7 @@ static inline int scanhash_sha256d_4way(int thr_id, uint32_t *pdata,
 			}
 		}
 	} while (n < max_nonce && !work_restart[thr_id].restart);
-	
+
 	*hashes_done = n - first_nonce + 1;
 	pdata[19] = n;
 	return 0;
@@ -541,13 +544,13 @@ static inline int scanhash_sha256d_8way(int thr_id, uint32_t *pdata,
 	const uint32_t first_nonce = pdata[19];
 	const uint32_t Htarg = ptarget[7];
 	int i, j;
-	
+
 	memcpy(data, pdata + 16, 64);
 	sha256d_preextend(data);
 	for (i = 31; i >= 0; i--)
 		for (j = 0; j < 8; j++)
 			data[i * 8 + j] = data[i];
-	
+
 	sha256_init(midstate);
 	sha256_transform(midstate, pdata, 0);
 	memcpy(prehash, midstate, 32);
@@ -558,13 +561,13 @@ static inline int scanhash_sha256d_8way(int thr_id, uint32_t *pdata,
 			prehash[i * 8 + j] = prehash[i];
 		}
 	}
-	
+
 	do {
 		for (i = 0; i < 8; i++)
 			data[8 * 3 + i] = ++n;
-		
+
 		sha256d_ms_8way(hash, data, midstate, prehash);
-		
+
 		for (i = 0; i < 8; i++) {
 			if (swab32(hash[8 * 7 + i]) <= Htarg) {
 				pdata[19] = data[8 * 3 + i];
@@ -576,7 +579,7 @@ static inline int scanhash_sha256d_8way(int thr_id, uint32_t *pdata,
 			}
 		}
 	} while (n < max_nonce && !work_restart[thr_id].restart);
-	
+
 	*hashes_done = n - first_nonce + 1;
 	pdata[19] = n;
 	return 0;
@@ -594,7 +597,7 @@ int scanhash_sha256d(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
 	uint32_t n = pdata[19] - 1;
 	const uint32_t first_nonce = pdata[19];
 	const uint32_t Htarg = ptarget[7];
-	
+
 #ifdef HAVE_SHA256_8WAY
 	if (sha256_use_8way())
 		return scanhash_sha256d_8way(thr_id, pdata, ptarget,
@@ -605,15 +608,15 @@ int scanhash_sha256d(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
 		return scanhash_sha256d_4way(thr_id, pdata, ptarget,
 			max_nonce, hashes_done);
 #endif
-	
+
 	memcpy(data, pdata + 16, 64);
 	sha256d_preextend(data);
-	
+
 	sha256_init(midstate);
 	sha256_transform(midstate, pdata, 0);
 	memcpy(prehash, midstate, 32);
 	sha256d_prehash(prehash, pdata + 16);
-	
+
 	do {
 		data[3] = ++n;
 		sha256d_ms(hash, data, midstate, prehash);
@@ -626,8 +629,436 @@ int scanhash_sha256d(int thr_id, uint32_t *pdata, const uint32_t *ptarget,
 			}
 		}
 	} while (n < max_nonce && !work_restart[thr_id].restart);
-	
+
 	*hashes_done = n - first_nonce + 1;
 	pdata[19] = n;
 	return 0;
 }
+
+/*
+static inline void pobh_sha256d_ms(uint32_t *hash, uint32_t *W,
+	const uint32_t *midstate, const uint32_t *prehash)
+{
+	uint32_t S[64];
+	uint32_t t0, t1;
+	int i;
+
+	S[18] = W[18];
+	S[19] = W[19];
+	S[20] = W[20];
+	S[22] = W[22];
+	S[23] = W[23];
+	S[24] = W[24];
+	S[30] = W[30];
+	S[31] = W[31];
+
+	W[18] += s0(W[3]);
+	W[19] += W[3];
+	W[20] += s1(W[18]);
+	W[21]  = s1(W[19]);
+	W[22] += s1(W[20]);
+	W[23] += s1(W[21]);
+	W[24] += s1(W[22]);
+	W[25]  = s1(W[23]) + W[18];
+	W[26]  = s1(W[24]) + W[19];
+	W[27]  = s1(W[25]) + W[20];
+	W[28]  = s1(W[26]) + W[21];
+	W[29]  = s1(W[27]) + W[22];
+	W[30] += s1(W[28]) + W[23];
+	W[31] += s1(W[29]) + W[24];
+	for (i = 32; i < 64; i += 2) {
+		W[i]   = s1(W[i - 2]) + W[i - 7] + s0(W[i - 15]) + W[i - 16];
+		W[i+1] = s1(W[i - 1]) + W[i - 6] + s0(W[i - 14]) + W[i - 15];
+	}
+
+	memcpy(S, prehash, 32);
+
+	RNDr(S, W,  3);
+	RNDr(S, W,  4);
+	RNDr(S, W,  5);
+	RNDr(S, W,  6);
+	RNDr(S, W,  7);
+	RNDr(S, W,  8);
+	RNDr(S, W,  9);
+	RNDr(S, W, 10);
+	RNDr(S, W, 11);
+	RNDr(S, W, 12);
+	RNDr(S, W, 13);
+	RNDr(S, W, 14);
+	RNDr(S, W, 15);
+	RNDr(S, W, 16);
+	RNDr(S, W, 17);
+	RNDr(S, W, 18);
+	RNDr(S, W, 19);
+	RNDr(S, W, 20);
+	RNDr(S, W, 21);
+	RNDr(S, W, 22);
+	RNDr(S, W, 23);
+	RNDr(S, W, 24);
+	RNDr(S, W, 25);
+	RNDr(S, W, 26);
+	RNDr(S, W, 27);
+	RNDr(S, W, 28);
+	RNDr(S, W, 29);
+	RNDr(S, W, 30);
+	RNDr(S, W, 31);
+	RNDr(S, W, 32);
+	RNDr(S, W, 33);
+	RNDr(S, W, 34);
+	RNDr(S, W, 35);
+	RNDr(S, W, 36);
+	RNDr(S, W, 37);
+	RNDr(S, W, 38);
+	RNDr(S, W, 39);
+	RNDr(S, W, 40);
+	RNDr(S, W, 41);
+	RNDr(S, W, 42);
+	RNDr(S, W, 43);
+	RNDr(S, W, 44);
+	RNDr(S, W, 45);
+	RNDr(S, W, 46);
+	RNDr(S, W, 47);
+	RNDr(S, W, 48);
+	RNDr(S, W, 49);
+	RNDr(S, W, 50);
+	RNDr(S, W, 51);
+	RNDr(S, W, 52);
+	RNDr(S, W, 53);
+	RNDr(S, W, 54);
+	RNDr(S, W, 55);
+	RNDr(S, W, 56);
+	RNDr(S, W, 57);
+	RNDr(S, W, 58);
+	RNDr(S, W, 59);
+	RNDr(S, W, 60);
+	RNDr(S, W, 61);
+	RNDr(S, W, 62);
+	RNDr(S, W, 63);
+
+	for (i = 0; i < 8; i++)
+		S[i] += midstate[i];
+
+	W[18] = S[18];
+	W[19] = S[19];
+	W[20] = S[20];
+	W[22] = S[22];
+	W[23] = S[23];
+	W[24] = S[24];
+	W[30] = S[30];
+	W[31] = S[31];
+
+	memcpy(S + 8, sha256d_hash1 + 8, 32);
+	S[16] = s1(sha256d_hash1[14]) + sha256d_hash1[ 9] + s0(S[ 1]) + S[ 0];
+	S[17] = s1(sha256d_hash1[15]) + sha256d_hash1[10] + s0(S[ 2]) + S[ 1];
+	S[18] = s1(S[16]) + sha256d_hash1[11] + s0(S[ 3]) + S[ 2];
+	S[19] = s1(S[17]) + sha256d_hash1[12] + s0(S[ 4]) + S[ 3];
+	S[20] = s1(S[18]) + sha256d_hash1[13] + s0(S[ 5]) + S[ 4];
+	S[21] = s1(S[19]) + sha256d_hash1[14] + s0(S[ 6]) + S[ 5];
+	S[22] = s1(S[20]) + sha256d_hash1[15] + s0(S[ 7]) + S[ 6];
+	S[23] = s1(S[21]) + S[16] + s0(sha256d_hash1[ 8]) + S[ 7];
+	S[24] = s1(S[22]) + S[17] + s0(sha256d_hash1[ 9]) + sha256d_hash1[ 8];
+	S[25] = s1(S[23]) + S[18] + s0(sha256d_hash1[10]) + sha256d_hash1[ 9];
+	S[26] = s1(S[24]) + S[19] + s0(sha256d_hash1[11]) + sha256d_hash1[10];
+	S[27] = s1(S[25]) + S[20] + s0(sha256d_hash1[12]) + sha256d_hash1[11];
+	S[28] = s1(S[26]) + S[21] + s0(sha256d_hash1[13]) + sha256d_hash1[12];
+	S[29] = s1(S[27]) + S[22] + s0(sha256d_hash1[14]) + sha256d_hash1[13];
+	S[30] = s1(S[28]) + S[23] + s0(sha256d_hash1[15]) + sha256d_hash1[14];
+	S[31] = s1(S[29]) + S[24] + s0(S[16])             + sha256d_hash1[15];
+	for (i = 32; i < 60; i += 2) {
+		S[i]   = s1(S[i - 2]) + S[i - 7] + s0(S[i - 15]) + S[i - 16];
+		S[i+1] = s1(S[i - 1]) + S[i - 6] + s0(S[i - 14]) + S[i - 15];
+	}
+	S[60] = s1(S[58]) + S[53] + s0(S[45]) + S[44];
+
+	sha256_init(hash);
+
+	RNDr(hash, S,  0);
+	RNDr(hash, S,  1);
+	RNDr(hash, S,  2);
+	RNDr(hash, S,  3);
+	RNDr(hash, S,  4);
+	RNDr(hash, S,  5);
+	RNDr(hash, S,  6);
+	RNDr(hash, S,  7);
+	RNDr(hash, S,  8);
+	RNDr(hash, S,  9);
+	RNDr(hash, S, 10);
+	RNDr(hash, S, 11);
+	RNDr(hash, S, 12);
+	RNDr(hash, S, 13);
+	RNDr(hash, S, 14);
+	RNDr(hash, S, 15);
+	RNDr(hash, S, 16);
+	RNDr(hash, S, 17);
+	RNDr(hash, S, 18);
+	RNDr(hash, S, 19);
+	RNDr(hash, S, 20);
+	RNDr(hash, S, 21);
+	RNDr(hash, S, 22);
+	RNDr(hash, S, 23);
+	RNDr(hash, S, 24);
+	RNDr(hash, S, 25);
+	RNDr(hash, S, 26);
+	RNDr(hash, S, 27);
+	RNDr(hash, S, 28);
+	RNDr(hash, S, 29);
+	RNDr(hash, S, 30);
+	RNDr(hash, S, 31);
+	RNDr(hash, S, 32);
+	RNDr(hash, S, 33);
+	RNDr(hash, S, 34);
+	RNDr(hash, S, 35);
+	RNDr(hash, S, 36);
+	RNDr(hash, S, 37);
+	RNDr(hash, S, 38);
+	RNDr(hash, S, 39);
+	RNDr(hash, S, 40);
+	RNDr(hash, S, 41);
+	RNDr(hash, S, 42);
+	RNDr(hash, S, 43);
+	RNDr(hash, S, 44);
+	RNDr(hash, S, 45);
+	RNDr(hash, S, 46);
+	RNDr(hash, S, 47);
+	RNDr(hash, S, 48);
+	RNDr(hash, S, 49);
+	RNDr(hash, S, 50);
+	RNDr(hash, S, 51);
+	RNDr(hash, S, 52);
+	RNDr(hash, S, 53);
+	RNDr(hash, S, 54);
+	RNDr(hash, S, 55);
+	RNDr(hash, S, 56);
+
+	hash[2] += hash[6] + S1(hash[3]) + Ch(hash[3], hash[4], hash[5])
+	         + S[57] + sha256_k[57];
+	hash[1] += hash[5] + S1(hash[2]) + Ch(hash[2], hash[3], hash[4])
+	         + S[58] + sha256_k[58];
+	hash[0] += hash[4] + S1(hash[1]) + Ch(hash[1], hash[2], hash[3])
+	         + S[59] + sha256_k[59];
+	hash[7] += hash[3] + S1(hash[0]) + Ch(hash[0], hash[1], hash[2])
+	         + S[60] + sha256_k[60]
+	         + sha256_h[7];
+}
+
+
+int grabhash_256d(uint32_t *pdata, const uint32_t *ptarget,	uint32_t max_nonce, unsigned long *hashes_done)
+{
+	uint32_t data[64] __attribute__((aligned(128)));
+	uint32_t hash[8] __attribute__((aligned(32)));
+	uint32_t midstate[8] __attribute__((aligned(32)));
+	uint32_t prehash[8] __attribute__((aligned(32)));
+	uint32_t n = pdata[19] - 1;
+	const uint32_t first_nonce = pdata[19];
+	const uint32_t Htarg = ptarget[7];
+
+	memcpy(data, pdata + 16, 64);
+	sha256d_preextend(data);
+	sha256_init(midstate);
+	sha256_transform(midstate, pdata, 0);
+	memcpy(prehash, midstate, 32);
+	sha256d_prehash(prehash, pdata + 16);
+
+	do
+	{
+		data[3] = ++n;
+		sha256d_ms(hash, data, midstate, prehash);
+		if (swab32(hash[7]) <= Htarg)
+		{
+			pdata[19] = data[3];
+			sha256d_80_swap(hash, pdata);
+			if (fulltest(hash, ptarget))
+			{
+				*hashes_done = n - first_nonce + 1;
+				// Report the actual sha256d hash :
+
+				return 1;
+			}
+		}
+	} while (n < max_nonce);
+
+	*hashes_done = n - first_nonce + 1;
+	pdata[19] = n;
+	return 0;
+}
+
+static void R256b(uint8_t toSwap[], uint8_t swapped[])
+{
+	for (int i = 0; i < 32; i++)
+	{
+		int iSource = 31 - i;
+		swapped[i] = toSwap[iSource];
+	}
+}
+
+static void ConvertH32TO8sz(uint32_t h1[], uint8_t h2[], int total_size)
+{
+	for (int i = 0; i < total_size; i++)
+	{
+		uint32_t a1 = h1[i];
+		memcpy(h2 + (i*4), &a1, sizeof(a1));
+	}
+}
+
+
+static void ConvertH32TO8(uint32_t h1[], uint8_t h2[])
+{
+	for (int i = 0; i < 8; i++)
+	{
+		uint32_t a1 = h1[i];
+		memcpy(h2 + (i*4), &a1, sizeof(a1));
+	}
+}
+
+static void ConvertH8TO32(uint8_t h1[], uint32_t h2[])
+{
+	int v = 0;
+	for (int i = 0; i < 8; i++)
+	{
+		v = i * 4;
+		uint32_t i32 = (h1[v+3] << 24) | (h1[v+2] << 16) | (h1[v+1] << 8) | h1[v+0];
+		h2[i] = i32;
+	}
+}
+
+
+static void GetPOBHHash(uint32_t origSha256[8], uint32_t outPOBH[8], bool fLate)
+{
+	uint32_t hash_pobh[8] __attribute__((aligned(32)));
+	uint8_t uHash[32] = {0x0};
+	memcpy(hash_pobh, origSha256, 8);
+   	// From uint32 to uint8
+	ConvertH32TO8(hash_pobh, uHash);
+	//	memcpy(uHash, uOrigSha, 32);
+		if (fDebug)
+		{
+			printf(" Shahash:");
+			phex(uHash, 32);
+		}
+		BibleHashV2(uHash, fLate);
+		if (fDebug)
+		{
+			printf("\nbbphash:");
+			phex(uHash, 32);
+		}
+		
+		uint8_t uPOBHHash[32] = { 0x0 };
+
+		R256b(uHash, uPOBHHash);
+		
+		ConvertH8TO32(uPOBHHash, outPOBH);
+}
+
+
+
+
+#ifndef EXTERN_POBH
+static int nSolutionsFound = 0;
+
+int scanhash_pobh(int thr_id, uint32_t *pdata, const uint32_t *ptarget,	uint32_t max_nonce, unsigned long *hashes_done)
+{
+	bool fDebug2 = true;
+	uint32_t data[64] __attribute__((aligned(128)));
+	uint32_t hash[8] __attribute__((aligned(32)));
+
+	uint32_t midstate[8] __attribute__((aligned(32)));
+	uint32_t prehash[8] __attribute__((aligned(32)));
+	uint32_t n = pdata[19] - 1;
+	const uint32_t first_nonce = pdata[19];
+	const uint32_t Htarg = ptarget[7];
+
+	printf("starting 0 ");
+	//(pdata=work->data)::work 0 through 19 should give us the block hash: (80 bytes)
+	memcpy(data, pdata + 16, 64);
+	sha256d_preextend(data);
+	sha256_init(midstate);
+	sha256_transform(midstate, pdata, 0);
+	memcpy(prehash, midstate, 32);
+	sha256d_prehash(prehash, pdata + 16);
+	uint8_t uOrigSha[32] = {0x0};
+	bool fLate = false;  // TODO: calculate if the block is late based on the prior block info
+	printf("starting thread %d", thr_id);
+	uint32_t nHashesDone = 0;
+
+	// sanity 
+	// print 0-19 on the screen
+	// Get 8 byte pdata
+	uint32_t endiandata[64] __attribute__((aligned(128)));
+	
+	for (int k=0; k < 19; k++)
+		be32enc(&endiandata[k], pdata[k]);
+	//
+	uint8_t pdata8[80] = {0x0};
+	ConvertH32TO8sz(endiandata, pdata8, 20);
+
+	unsigned char *firstblock = malloc(160);
+	bin2hex(firstblock, (unsigned char *)pdata8, 80);
+	printf("My first block [%s]\n", firstblock);
+	// now get the hash of this
+	uint8_t firstblockhash[32] = {0x0};
+	sha256d(firstblockhash, pdata8, 80);
+
+	unsigned char *genhash = malloc(64);
+
+	bin2hex(genhash, (unsigned char *)firstblockhash, 32);
+	//	fprintf(stderr, "First Calculated Hash [%s]\n", genhash);
+
+
+	uint8_t pobhhash[32] = {0x0};
+	uint8_t pobhhash2[32] = {0x0};
+	
+	uint32_t finalhash[8] __attribute__((aligned(32)));
+
+	do 
+	{
+		n++;
+		data[3] = n;
+		pdata[19] = n;
+		// store the 1*32 bit nonce in the 4*8 bit register
+		//		for (int k=0; k < 19; k++)			be32enc(&endiandata[k], pdata[k]);
+		be32enc(&endiandata[19], n);
+		ConvertH32TO8sz(endiandata, pdata8, 20);
+
+         //		memcpy(pdata8 + (19*4), &pdata[19], sizeof(pdata[19]));
+		sha256d(firstblockhash, pdata8, 80);  // Hash the entire block header
+		// Hash the hash
+		sha256d(firstblockhash, firstblockhash, 32);
+
+		memcpy(pobhhash, firstblockhash, 32);
+		BibleHashV2(pobhhash, fLate);
+		R256b(pobhhash, pobhhash2);
+		
+		ConvertH8TO32(pobhhash2, finalhash);
+
+
+		if (fulltest(finalhash, ptarget)) 
+		{
+				if (fDebug2)
+				{
+					pdata[19] = n;
+					char sha_str[65], pobh_str[65];
+
+					bin2hex(sha_str, (unsigned char *)firstblockhash, 32);
+					bin2hex(pobh_str, (unsigned char *)pobhhash, 32);
+					printf("\n\nSOLUTION FOUND: SHA-HASH %s,\n POBHASH %s ", sha_str, pobh_str);
+
+					unsigned char *firstblock2 = malloc(160);
+					bin2hex(firstblock2, (unsigned char *)pdata8, 80);
+					printf("\nBLOCK DATA [%s]\n", firstblock2);
+	
+
+				}
+		        //				printf("\nSOLUTION FOUND %d", nSolutionsFound);
+				nSolutionsFound++;
+				*hashes_done = n - first_nonce + 1;
+				return 1;
+			}
+		
+	} while (n < max_nonce && !work_restart[thr_id].restart);
+
+	*hashes_done = n - first_nonce + 1;
+	pdata[19] = n;
+	return 0;
+}
+#endif
+*/

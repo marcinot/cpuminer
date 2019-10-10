@@ -1,15 +1,18 @@
 /*
  * Copyright 2010 Jeff Garzik
  * Copyright 2012-2017 pooler
- *
+ *                     BiblePay
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
  * Software Foundation; either version 2 of the License, or (at your option)
  * any later version.  See COPYING for more details.
  */
 
-#include "cpuminer-config.h"
 #define _GNU_SOURCE
+ 
+#include "kjv.h"
+
+#include "cpuminer-config.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +46,9 @@
 
 #ifdef __linux /* Linux specific policy and affinity management */
 #include <sched.h>
+
+extern void printme2(char *caption, uint32_t bufhash[]);
+
 static inline void drop_policy(void)
 {
 	struct sched_param param;
@@ -86,7 +92,7 @@ static inline void affine_to_cpu(int id, int cpu)
 {
 }
 #endif
-		
+
 enum workio_commands {
 	WC_GET_WORK,
 	WC_SUBMIT_WORK,
@@ -101,15 +107,18 @@ struct workio_cmd {
 };
 
 enum algos {
+	ALGO_POBH,          /* proof-of-bible-hash */
 	ALGO_SCRYPT,		/* scrypt(1024,1,1) */
 	ALGO_SHA256D,		/* SHA-256d */
 };
 
 static const char *algo_names[] = {
+	[ALGO_POBH]         = "pobh",
 	[ALGO_SCRYPT]		= "scrypt",
 	[ALGO_SHA256D]		= "sha256d",
 };
 
+bool fDebug = false;
 bool opt_debug = false;
 bool opt_protocol = false;
 static bool opt_benchmark = false;
@@ -127,7 +136,7 @@ static int opt_retries = -1;
 static int opt_fail_pause = 30;
 int opt_timeout = 0;
 static int opt_scantime = 5;
-static enum algos opt_algo = ALGO_SCRYPT;
+static enum algos opt_algo = ALGO_POBH;
 static int opt_scrypt_n = 1024;
 static int opt_n_threads;
 static int num_processors;
@@ -169,9 +178,10 @@ static char const usage[] = "\
 Usage: " PROGRAM_NAME " [OPTIONS]\n\
 Options:\n\
   -a, --algo=ALGO       specify the algorithm to use\n\
-                          scrypt    scrypt(1024, 1, 1) (default)\n\
+                          scrypt    scrypt(1024, 1, 1)\n\
                           scrypt:N  scrypt(N, 1, 1)\n\
                           sha256d   SHA-256d\n\
+						  pobh      proof-of-bible-hash (default)\n\
   -o, --url=URL         URL of mining server\n\
   -O, --userpass=U:P    username:password pair for mining server\n\
   -u, --user=USERNAME   username for mining server\n\
@@ -256,13 +266,15 @@ static struct option const options[] = {
 };
 
 struct work {
+	// initial work structure
 	uint32_t data[32];
 	uint32_t target[8];
-
+    uint32_t block[2048];
+	int block_size;
+	int block_size_bytes;
 	int height;
 	char *txs;
 	char *workid;
-
 	char *job_id;
 	size_t xnonce2_len;
 	unsigned char *xnonce2;
@@ -314,10 +326,64 @@ static bool jobj_binary(const json_t *obj, const char *key,
 		return false;
 	}
 	if (!hex2bin(buf, hexstr, buflen))
+	{
+		printf("\nDying due to unable to convert to bin %s", hexstr);
 		return false;
-
+	}
 	return true;
 }
+
+
+static bool work_decode2(const json_t *val, struct work *work)
+{
+	int i;
+	uint32_t target[8];
+
+	const char *hexstr;
+	json_t *tmp;
+
+	hexstr=json_string_value(json_object_get(val, "hex"));
+
+	if (unlikely(!jobj_binary(val, "hex", work->block, strlen(hexstr)/2))) 
+	{
+		applog(LOG_ERR, "JSON invalid data-empty hex-bbp2 %s",hexstr);
+		goto err_out;
+	}
+	if (unlikely(!jobj_binary(val, "target", target, sizeof(target)))) {
+		applog(LOG_ERR, "JSON invalid target");
+		goto err_out;
+	}
+	work->block_size = strlen(hexstr)/8;
+	work->block_size_bytes = strlen(hexstr)/2;
+
+	char *myBlock = malloc((work->block_size_bytes * 2 )+ 1);
+
+	bin2hex(myBlock, (unsigned char *)work->block, work->block_size_bytes);
+	if (fDebug)
+		printf("[hashing ] [%s] \n\n\n",myBlock);
+
+	for (i = 0; i < 20; i++)
+		work->data[i] = work->block[i];
+	for (i = 0; i < ARRAY_SIZE(work->target); i++)
+		work->target[7 - i] = be32dec(target + i);
+
+	uint32_t hash[8] __attribute__((aligned(128)));
+	uint32_t endiandata[20] __attribute__((aligned(128)));
+
+	for (int k=0; k < 20; k++)
+		endiandata[k]= work->data[k];
+
+	x11hash(hash, endiandata);
+    if (fDebug)
+		printme2("\nThis is my downloaded x11 hash \n", hash);
+
+	return true;
+
+err_out:
+	printf("\nErroring out \n");
+	return false;
+}
+
 
 static bool work_decode(const json_t *val, struct work *work)
 {
@@ -433,11 +499,13 @@ static bool gbt_work_decode(const json_t *val, struct work *work)
 			goto out;
 		}
 		tx_size += strlen(tx_hex) / 2;
+		printf("\nMy transaction #%d   :  [%s], ", i, tx_hex);
 	}
 
 	/* build coinbase transaction */
 	tmp = json_object_get(val, "coinbasetxn");
-	if (tmp) {
+	if (tmp) 
+	{
 		const char *cbtx_hex = json_string_value(json_object_get(tmp, "data"));
 		cbtx_size = cbtx_hex ? strlen(cbtx_hex) / 2 : 0;
 		cbtx = malloc(cbtx_size + 100);
@@ -445,7 +513,9 @@ static bool gbt_work_decode(const json_t *val, struct work *work)
 			applog(LOG_ERR, "JSON invalid coinbasetxn");
 			goto out;
 		}
-	} else {
+	}
+	else 
+	{
 		int64_t cbvalue;
 		if (!pk_script_size) {
 			if (allow_getwork) {
@@ -484,7 +554,11 @@ static bool gbt_work_decode(const json_t *val, struct work *work)
 		cbtx[cbtx_size++] = pk_script_size; /* txout-script length */
 		memcpy(cbtx+cbtx_size, pk_script, pk_script_size);
 		cbtx_size += pk_script_size;
-		if (segwit) {
+
+		if (segwit) 
+		{
+			printf("\nUSING SEGWIT!");
+
 			unsigned char (*wtree)[32] = calloc(tx_count + 2, 32);
 			memset(cbtx+cbtx_size, 0, 8); /* value */
 			cbtx_size += 8;
@@ -518,11 +592,14 @@ static bool gbt_work_decode(const json_t *val, struct work *work)
 			cbtx_size += 32;
 			free(wtree);
 		}
+
 		le32enc((uint32_t *)(cbtx+cbtx_size), 0); /* lock time */
 		cbtx_size += 4;
 		coinbase_append = true;
 	}
-	if (coinbase_append) {
+	if (coinbase_append) 
+	{
+		printf("\nAPPENDING COINBASE TX");
 		unsigned char xsig[100];
 		int xsig_len = 0;
 		if (*coinbase_sig) {
@@ -552,7 +629,9 @@ static bool gbt_work_decode(const json_t *val, struct work *work)
 				iter = json_object_iter_next(tmp, iter);
 			}
 		}
-		if (xsig_len) {
+		if (xsig_len) 
+		{
+			printf("\n APPENDING SIGNATURE ");
 			unsigned char *ssig_end = cbtx + 42 + cbtx[41];
 			int push_len = cbtx[41] + xsig_len < 76 ? 1 :
 			               cbtx[41] + 2 + xsig_len > 100 ? 0 : 2;
@@ -568,6 +647,10 @@ static bool gbt_work_decode(const json_t *val, struct work *work)
 		}
 	}
 
+	// BIBLEPAY - Add an additional byte to the end of the coinbase transaction
+	cbtx[cbtx_size++] = 0;
+	// End of BiblePay
+	
 	n = varint_encode(txc_vi, 1 + tx_count);
 	work->txs = malloc(2 * (n + cbtx_size + tx_size) + 1);
 	bin2hex(work->txs, txc_vi, n);
@@ -576,7 +659,8 @@ static bool gbt_work_decode(const json_t *val, struct work *work)
 	/* generate merkle root */
 	merkle_tree = malloc(32 * ((1 + tx_count + 1) & ~1));
 	sha256d(merkle_tree[0], cbtx, cbtx_size);
-	for (i = 0; i < tx_count; i++) {
+	for (i = 0; i < tx_count; i++) 
+	{
 		tmp = json_array_get(txa, i);
 		const char *tx_hex = json_string_value(json_object_get(tmp, "data"));
 		const int tx_size = tx_hex ? strlen(tx_hex) / 2 : 0;
@@ -615,14 +699,15 @@ static bool gbt_work_decode(const json_t *val, struct work *work)
 	work->data[0] = swab32(version);
 	for (i = 0; i < 8; i++)
 		work->data[8 - i] = le32dec(prevhash + i);
+	// Write the merkle root
 	for (i = 0; i < 8; i++)
 		work->data[9 + i] = be32dec((uint32_t *)merkle_tree[0] + i);
+	
 	work->data[17] = swab32(curtime);
 	work->data[18] = le32dec(&bits);
 	memset(work->data + 19, 0x00, 52);
 	work->data[20] = 0x80000000;
 	work->data[31] = 0x00000280;
-
 	if (unlikely(!jobj_binary(val, "target", target, sizeof(target)))) {
 		applog(LOG_ERR, "JSON invalid target");
 		goto out;
@@ -673,7 +758,7 @@ static void share_result(int result, const char *reason)
 		hashrate += thr_hashrates[i];
 	result ? accepted_count++ : rejected_count++;
 	pthread_mutex_unlock(&stats_lock);
-	
+
 	sprintf(s, hashrate >= 1e6 ? "%.0f" : "%.2f", 1e-3 * hashrate);
 	applog(LOG_INFO, "accepted: %lu/%lu (%.2f%%), %s khash/s %s",
 		   accepted_count,
@@ -683,7 +768,7 @@ static void share_result(int result, const char *reason)
 		   result ? "(yay!!!)" : "(booooo)");
 
 	if (opt_debug && reason)
-		applog(LOG_DEBUG, "DEBUG: reject reason: %s", reason);
+		applog(LOG_DEBUG, "DEBUG2: reject reason: %s", reason);
 }
 
 static bool submit_upstream_work(CURL *curl, struct work *work)
@@ -696,12 +781,15 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 
 	/* pass if the previous hash is not the current previous hash */
 	if (!submit_old && memcmp(work->data + 1, g_work.data + 1, 32)) {
+		printf("\nSTALE WORK");
+
 		if (opt_debug)
 			applog(LOG_DEBUG, "DEBUG: stale work detected, discarding");
 		return true;
 	}
 
-	if (have_stratum) {
+	if (have_stratum) 
+	{
 		uint32_t ntime, nonce;
 		char ntimestr[9], noncestr[9], *xnonce2str, *req;
 
@@ -722,11 +810,14 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 			applog(LOG_ERR, "submit_upstream_work stratum_send_line failed");
 			goto out;
 		}
-	} else if (work->txs) {
+	}
+	else if (work->txs) 
+	{
 		char *req;
 
 		for (i = 0; i < ARRAY_SIZE(work->data); i++)
 			be32enc(work->data + i, work->data[i]);
+    	
 		bin2hex(data_str, (unsigned char *)work->data, 80);
 		if (work->workid) {
 			char *params;
@@ -745,15 +836,18 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 				"{\"method\": \"submitblock\", \"params\": [\"%s%s\"], \"id\":1}\r\n",
 				data_str, work->txs);
 		}
+		
 		val = json_rpc_call(curl, rpc_url, rpc_userpass, req, NULL, 0);
 		free(req);
+		
 		if (unlikely(!val)) {
 			applog(LOG_ERR, "submit_upstream_work json_rpc_call failed");
 			goto out;
 		}
 
 		res = json_object_get(val, "result");
-		if (json_is_object(res)) {
+		if (json_is_object(res)) 
+		{
 			char *res_str;
 			bool sumres = false;
 			void *iter = json_object_iter(res);
@@ -768,31 +862,73 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 			share_result(sumres, res_str);
 			free(res_str);
 		} else
+		{
 			share_result(json_is_null(res), json_string_value(res));
+		}
 
 		json_decref(val);
-	} else {
+	}
+	else 
+	{
+		// This area handles submission of blocks with or without ABN's using 'submitblock'
 		/* build hex string */
+		//First insert the entire block as it came to us
 		for (i = 0; i < ARRAY_SIZE(work->data); i++)
 			le32enc(work->data + i, work->data[i]);
-		bin2hex(data_str, (unsigned char *)work->data, sizeof(work->data));
+	
+		// copy the solution into the work block
+		for (i = 0; i < 20; i++)
+		{
+			work->block[i] = work->data[i];
+		}
+		char data_str2[(work->block_size_bytes*2) + 128];
 
-		/* build JSON-RPC request */
-		sprintf(s,
-			"{\"method\": \"getwork\", \"params\": [ \"%s\" ], \"id\":1}\r\n",
-			data_str);
+		bin2hex(data_str2, (unsigned char *)work->block, work->block_size_bytes);
+		char *req;
 
+		// malloc for the biggie
+		req = malloc((work->block_size_bytes*2) + 128);
+		sprintf(req,
+				"{\"method\": \"submitblock\", \"params\": [\"%s\"], \"id\":1}\r\n",
+				data_str2);
+				
 		/* issue JSON-RPC request */
-		val = json_rpc_call(curl, rpc_url, rpc_userpass, s, NULL, 0);
+		printf("\n\nSUBMITTING RPC1 [%s]\n", req);
+
+		val = json_rpc_call(curl, rpc_url, rpc_userpass, req, NULL, 0);
+		
 		if (unlikely(!val)) {
-			applog(LOG_ERR, "submit_upstream_work json_rpc_call failed");
+			applog(LOG_ERR, "submit_upstream_work(solominer) json_rpc_call failed");
 			goto out;
 		}
 
 		res = json_object_get(val, "result");
-		reason = json_object_get(val, "reject-reason");
-		share_result(json_is_true(res), reason ? json_string_value(reason) : NULL);
+		
+		free(req);
 
+		if (json_is_object(res)) 
+		{
+			char *res_str;
+			bool sumres = false;
+			void *iter = json_object_iter(res);
+			while (iter) {
+				if (json_is_null(json_object_iter_value(iter))) {
+					sumres = true;
+					break;
+				}
+				iter = json_object_iter_next(res, iter);
+			}
+			res_str = json_dumps(res, 0);
+			printf("\nSUBMIT_BLOCK RESULT %s", res_str);
+
+			share_result(sumres, res_str);
+			free(res_str);
+		} else
+		{
+			printf("SUBMITBLOCK RESULT NULL\n");
+			share_result(json_is_null(res), json_string_value(res));
+		}
+		
 		json_decref(val);
 	}
 
@@ -805,6 +941,10 @@ out:
 static const char *getwork_req =
 	"{\"method\": \"getwork\", \"params\": [], \"id\":0}\r\n";
 
+static const char *getwork_req_bbp = 
+	"{\"method\": \"getblockforstratum\", \"params\": [], \"id\":0}\r\n";
+
+
 #define GBT_CAPABILITIES "[\"coinbasetxn\", \"coinbasevalue\", \"longpoll\", \"workid\"]"
 #define GBT_RULES "[\"segwit\"]"
 
@@ -814,6 +954,69 @@ static const char *gbt_req =
 static const char *gbt_lp_req =
 	"{\"method\": \"getblocktemplate\", \"params\": [{\"capabilities\": "
 	GBT_CAPABILITIES ", \"rules\": " GBT_RULES ", \"longpollid\": \"%s\"}], \"id\":0}\r\n";
+
+
+static bool get_upstream_work2(CURL *curl, struct work *work)
+{
+	json_t *val;
+	int err;
+	bool rc;
+	struct timeval tv_start, tv_end, diff;
+
+start:
+	gettimeofday(&tv_start, NULL);
+	val = json_rpc_call(curl, rpc_url, rpc_userpass,
+			    getwork_req_bbp,
+			    &err, have_gbt ? JSON_RPC_QUIET_404 : 0);
+	gettimeofday(&tv_end, NULL);
+
+	if (have_stratum) {
+		if (val)
+			json_decref(val);
+		return true;
+	}
+
+	if (!have_gbt && !allow_getwork) {
+		applog(LOG_ERR, "No usable protocol");
+		if (val)
+			json_decref(val);
+		return false;
+	}
+
+	if (have_gbt && !val && err == CURLE_OK) {
+		applog(LOG_INFO, "getblocktemplate-stratum-bbp failed, falling back to getwork");
+		have_gbt = false;
+		goto start;
+	}
+
+	if (!val)
+	{
+		return false;
+	}
+
+	if (have_gbt) 
+	{
+		json_t *reason1 = json_object_get(json_object_get(val, "result"),"hex");
+		
+		rc = work_decode2(json_object_get(val, "result"), work);
+		if (!have_gbt) {
+			json_decref(val);
+			goto start;
+		}
+	} 
+
+	if (opt_debug && rc) {
+		timeval_subtract(&diff, &tv_end, &tv_start);
+		applog(LOG_DEBUG, "DEBUG: got new work in %d ms",
+		       diff.tv_sec * 1000 + diff.tv_usec / 1000);
+	}
+	
+	json_decref(val);
+
+	return rc;
+}
+
+
 
 static bool get_upstream_work(CURL *curl, struct work *work)
 {
@@ -899,7 +1102,7 @@ static bool workio_get_work(struct workio_cmd *wc, CURL *curl)
 		return false;
 
 	/* obtain new work from bitcoin via JSON-RPC */
-	while (!get_upstream_work(curl, ret_work)) {
+	while (!get_upstream_work2(curl, ret_work)) {
 		if (unlikely((opt_retries >= 0) && (++failures > opt_retries))) {
 			applog(LOG_ERR, "json_rpc_call failed, terminating workio thread");
 			free(ret_work);
@@ -1028,7 +1231,7 @@ static bool get_work(struct thr_info *thr, struct work *work)
 static bool submit_work(struct thr_info *thr, const struct work *work_in)
 {
 	struct workio_cmd *wc;
-	
+
 	/* fill out work request message */
 	wc = calloc(1, sizeof(*wc));
 	if (!wc)
@@ -1072,7 +1275,7 @@ static void stratum_gen_work(struct stratum_ctx *sctx, struct work *work)
 		memcpy(merkle_root + 32, sctx->job.merkle[i], 32);
 		sha256d(merkle_root, merkle_root, 64);
 	}
-	
+
 	/* Increment extranonce2 */
 	for (i = 0; i < sctx->xnonce2_size && !++sctx->job.xnonce2[i]; i++);
 
@@ -1130,7 +1333,7 @@ static void *miner_thread(void *userdata)
 			       thr_id, thr_id % num_processors);
 		affine_to_cpu(thr_id, thr_id % num_processors);
 	}
-	
+
 	if (opt_algo == ALGO_SCRYPT) {
 		scratchbuf = scrypt_buffer_alloc(opt_scrypt_n);
 		if (!scratchbuf) {
@@ -1181,7 +1384,7 @@ static void *miner_thread(void *userdata)
 			work.data[19]++;
 		pthread_mutex_unlock(&g_work_lock);
 		work_restart[thr_id].restart = 0;
-		
+
 		/* adjust max_nonce to meet target scan time */
 		if (have_stratum)
 			max64 = LP_SCANTIME;
@@ -1195,7 +1398,12 @@ static void *miner_thread(void *userdata)
 				max64 = opt_scrypt_n < 16 ? 0x3ffff : 0x3fffff / opt_scrypt_n;
 				break;
 			case ALGO_SHA256D:
+				max64 = 0x07ffff;
+				break;
+			case ALGO_POBH:
+				// Max nonce pobh:
 				max64 = 0x1fffff;
+//				max64 = 0x00ffff;
 				break;
 			}
 		}
@@ -1203,23 +1411,27 @@ static void *miner_thread(void *userdata)
 			max_nonce = end_nonce;
 		else
 			max_nonce = work.data[19] + max64;
-		
+
 		hashes_done = 0;
 		gettimeofday(&tv_start, NULL);
 
 		/* scan nonces for a proof-of-work hash */
-		switch (opt_algo) {
-		case ALGO_SCRYPT:
+		switch (opt_algo) 
+		{
+		  case ALGO_SCRYPT:
+			printf("Not using POBH  using scrypt.  %d", 1);
 			rc = scanhash_scrypt(thr_id, work.data, scratchbuf, work.target,
 			                     max_nonce, &hashes_done, opt_scrypt_n);
 			break;
 
-		case ALGO_SHA256D:
+		  case ALGO_SHA256D:
 			rc = scanhash_sha256d(thr_id, work.data, work.target,
 			                      max_nonce, &hashes_done);
 			break;
-
-		default:
+		  case ALGO_POBH:
+			rc = scanhash_pobh2(thr_id, work.data, work.target, max_nonce, &hashes_done);
+			break;
+		  default:
 			/* should never happen */
 			goto out;
 		}
@@ -1291,7 +1503,7 @@ start:
 		lp_url = hdr_path;
 		hdr_path = NULL;
 	}
-	
+
 	/* absolute path, on current server */
 	else {
 		copy_start = (*hdr_path == '/') ? (hdr_path + 1) : hdr_path;
@@ -1445,7 +1657,7 @@ static void *stratum_thread(void *userdata)
 				restart_threads();
 			}
 		}
-		
+
 		if (!stratum_socket_full(&stratum, 120)) {
 			applog(LOG_ERR, "Stratum connection timed out");
 			s = NULL;
@@ -1518,6 +1730,21 @@ static void show_version_and_exit(void)
 	exit(0);
 }
 
+static void PrintShaHash(unsigned char *sHex)
+{
+	unsigned int bgsize = strlen(sHex) / 2;
+	unsigned char *bgbin = malloc(bgsize);
+	if (!hex2bin(bgbin, sHex, bgsize))
+	{
+		fprintf(stderr, "%d Failed to retrieve my hash", 1);
+	}
+    unsigned char *shagenesis = malloc(32);
+	sha256d(shagenesis, bgbin, bgsize);
+	unsigned char *genhash = malloc(64);
+	bin2hex(genhash, (unsigned char *)shagenesis, 32);
+	fprintf(stderr, "%s: Calculated Hash\n", genhash);
+}
+
 static void show_usage_and_exit(int status)
 {
 	if (status)
@@ -1532,6 +1759,7 @@ static void strhide(char *s)
 	if (*s) *s++ = 'x';
 	while (*s) *s++ = '\0';
 }
+
 
 static void parse_config(json_t *config, char *pname, char *ref);
 
@@ -1586,6 +1814,9 @@ static void parse_arg(int key, char *arg, char *pname)
 	}
 	case 'q':
 		opt_quiet = true;
+		break;
+	case '|':
+		fDebug=true;
 		break;
 	case 'D':
 		opt_debug = true;
@@ -1701,7 +1932,13 @@ static void parse_arg(int key, char *arg, char *pname)
 		rpc_pass = strdup(++p);
 		strhide(p);
 		break;
-	case 'x':			/* --proxy */
+	case 'x':;			/* --proxy */
+		// BBP
+		uint8_t uHash[32] = {0x0};
+		ArgToUint256(arg, uHash);
+		printf("pobh-hashing %s", arg);
+		BibleHashV2(uHash, true);
+		show_usage_and_exit(1);
 		if (!strncasecmp(arg, "socks4://", 9))
 			opt_proxy_type = CURLPROXY_SOCKS4;
 		else if (!strncasecmp(arg, "socks5://", 9))
@@ -1764,7 +2001,7 @@ static void parse_arg(int key, char *arg, char *pname)
 		show_version_and_exit();
 	case 'h':
 		show_usage_and_exit(0);
-	default:
+	default: 
 		show_usage_and_exit(1);
 	}
 }
@@ -1850,9 +2087,12 @@ int main(int argc, char *argv[])
 	struct thr_info *thr;
 	long flags;
 	int i;
+	fDebug = false;
 
 	rpc_user = strdup("");
 	rpc_pass = strdup("");
+	initkjv();
+	printf("\nKJV loaded\n");
 
 	/* parse command line */
 	parse_cmdline(argc, argv);
@@ -1931,7 +2171,7 @@ int main(int argc, char *argv[])
 	thr_info = calloc(opt_n_threads + 3, sizeof(*thr));
 	if (!thr_info)
 		return 1;
-	
+
 	thr_hashrates = (double *) calloc(opt_n_threads, sizeof(double));
 	if (!thr_hashrates)
 		return 1;
