@@ -159,6 +159,15 @@ extern int scanhash_scrypt(int thr_id, uint32_t *pdata,
 	unsigned char *scratchbuf, const uint32_t *ptarget,
 	uint32_t max_nonce, unsigned long *hashes_done, int N);
 
+extern int scanhash_pobh(int thr_id, uint32_t *pdata, 
+	const uint32_t *ptarget, uint32_t max_nonce, unsigned long *hashes_done);
+
+extern void x11hash(void *output, const void *input);
+
+extern int scanhash_pobh2(int thr_id, uint32_t *pdata, const uint32_t *ptarget, uint32_t max_nonce, unsigned long *hashes_done);
+extern void printme(char *caption, uint32_t bufhash[]);
+extern void printme2(char *caption, uint32_t bufhash[]);
+
 struct thr_info {
 	int		id;
 	pthread_t	pth;
