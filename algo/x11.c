@@ -16,6 +16,7 @@
 #include "sha3/sph_shavite.h"
 #include "sha3/sph_simd.h"
 #include "sha3/sph_echo.h"
+extern bool fDebug;
 
 void x11hash(void *output, const void *input)
 {
@@ -130,7 +131,7 @@ void printme2(char *caption, uint32_t bufhash[])
 	    be32enc(hash_be + i, bufhash[7 - i]);
 	}
 	bin2hex(hash_str, (unsigned char *)hash_be, 32);
-	printf("\n!!!!!!!!!%s - HASH [%s] \n", caption, hash_str);
+	printf("\n!! %s - HASH [%s] \n", caption, hash_str);
 }
 
 static void becencode(uint32_t bufhash[], uint32_t bechash[])
@@ -184,8 +185,11 @@ int scanhash_pobh2(int thr_id, uint32_t *pdata, const uint32_t *ptarget, uint32_
 		if (fulltest(finalhash, ptarget)) 
 		{
 			be32enc(&pdata[19], nonce);
-			printme2("\n SOLUTION FOUND !!!! \nx11", hash);
-			printme2("bbphash\n", finalhash);
+			if (fDebug)
+			{
+				printme2("\n SOLUTION FOUND !!!! \nx11", hash);
+				printme2("bbphash\n", finalhash);
+			}
 			*hashes_done = pdata[19] - first_nonce;
 			return 1;
 		}

@@ -12,5 +12,7 @@ extern void initkjv();
 extern void BibleHashV2();
 extern void ArgToUint256(char *arg, uint8_t uHash[]);
 extern void phex(uint8_t* str, uint8_t len);
+extern char *BibleMD5(char *str, int length);
+extern int Base64encode(char *encoded, const char *string, int len);
 
 #endif /* _KJV_H_ */

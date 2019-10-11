@@ -41,7 +41,7 @@
 #include "compat.h"
 #include "miner.h"
 
-#define PROGRAM_NAME		"minerd"
+#define PROGRAM_NAME		"bbpminer"
 #define LP_SCANTIME		60
 
 #ifdef __linux /* Linux specific policy and affinity management */
@@ -781,8 +781,7 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 
 	/* pass if the previous hash is not the current previous hash */
 	if (!submit_old && memcmp(work->data + 1, g_work.data + 1, 32)) {
-		printf("\nSTALE WORK");
-
+	
 		if (opt_debug)
 			applog(LOG_DEBUG, "DEBUG: stale work detected, discarding");
 		return true;
@@ -1934,10 +1933,18 @@ static void parse_arg(int key, char *arg, char *pname)
 		break;
 	case 'x':;			/* --proxy */
 		// BBP
+		// 
+		
+		test_suite();
 		uint8_t uHash[32] = {0x0};
 		ArgToUint256(arg, uHash);
 		printf("pobh-hashing %s", arg);
 		BibleHashV2(uHash, true);
+		phex(uHash,32);
+		printf("<-bbppobh\n");
+		char *sBase64 = malloc(96);
+	    Base64encode(sBase64, "Now is the time", 15);
+		printf("base64 %s\n", sBase64);
 		show_usage_and_exit(1);
 		if (!strncasecmp(arg, "socks4://", 9))
 			opt_proxy_type = CURLPROXY_SOCKS4;
