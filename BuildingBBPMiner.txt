@@ -11,10 +11,12 @@ BUILDING BBP MINER ON LINUX:
 
 USAGE INSTRUCTIONS (SOLO MINING):
 
-./bbpminer -o127.0.0.1:rpc_port_number -uYour_RPC_Username -pYour_RPC_Password
+./bbpminer -o127.0.0.1:rpc_port_number -uYour_RPC_Username -pYour_RPC_Password --no-longpoll
 
 BiblePay Configuration file (biblepay.conf):
 server=1
+daemon=1
+listen=1
 rpcallowip=127.0.0.1
 rpcport=14000 (or your own number)
 rpcuser=your_rpc_username
