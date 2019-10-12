@@ -15,6 +15,7 @@ USAGE INSTRUCTIONS (SOLO MINING):
 
 BiblePay Configuration file (biblepay.conf):
 server=1
+rpcallowip=127.0.0.1
 rpcport=14000 (or your own number)
 rpcuser=your_rpc_username
 rpcpassword=your_rpc_password
