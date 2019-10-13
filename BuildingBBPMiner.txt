@@ -1,7 +1,13 @@
 
 BUILDING BBP MINER ON LINUX:
 
+Install Linux dependencies first:
+apt-get install automake autoconf pkg-config libcurl4-openssl-dev libjansson-dev libssl-dev libgmp-dev zlib1g-dev make g++
 
+Git:
+git clone https://github.com/biblepay/cpuminer
+
+Build:
 	./autogen.sh	# only needed if building from git repo
 	./nomacro.pl	# in case the assembler doesn't support macros
 	./configure CFLAGS="-O3" # Make sure -O3 is an O and not a zero!
@@ -11,7 +17,7 @@ BUILDING BBP MINER ON LINUX:
 
 USAGE INSTRUCTIONS (SOLO MINING):
 
-./bbpminer -o127.0.0.1:rpc_port_number -uYour_RPC_Username -pYour_RPC_Password --no-longpoll
+./bbpminer -o127.0.0.1:rpc_port_number -uYour_RPC_Username -pYour_RPC_Password
 
 BiblePay Configuration file (biblepay.conf):
 server=1

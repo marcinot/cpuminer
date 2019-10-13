@@ -37,6 +37,7 @@
 #include "compat.h"
 #include "miner.h"
 #include "elist.h"
+extern bool fDebug;
 
 struct data_buffer {
 	void		*buf;
@@ -878,11 +879,14 @@ bool fulltest(const uint32_t *hash, const uint32_t *target)
 		bin2hex(hash_str, (unsigned char *)hash_be, 32);
 		bin2hex(target_str, (unsigned char *)target_be, 32);
 
-		applog(LOG_DEBUG, "DEBUG: %s\nHash:   %s\nTarget: %s",
-			rc ? "hash <= target"
-			   : "hash > target (false positive)",
-			hash_str,
-			target_str);
+		if (fDebug)
+		{
+			applog(LOG_DEBUG, "DEBUG: %s\nHash:   %s\nTarget: %s",
+				rc ? "hash <= target"
+				: "hash > target (false positive)",
+				hash_str,
+				target_str);
+		}
 	}
 
 	return rc;

@@ -132,7 +132,7 @@ bool have_stratum = false;
 bool use_syslog = false;
 static bool opt_background = false;
 static bool opt_quiet = false;
-static int opt_retries = 7000;
+static int opt_retries = -1;
 static int opt_fail_pause = 30;
 int opt_timeout = 0;
 static int opt_scantime = 60;
@@ -1105,6 +1105,7 @@ static bool workio_get_work(struct workio_cmd *wc, CURL *curl)
 	while (!get_upstream_work2(curl, ret_work)) {
 		if (unlikely((opt_retries >= 0) && (++failures > opt_retries))) 
 		{
+			printf("Optional retries exceeded; terminating workio thread");
 			applog(LOG_ERR, "json_rpc_call failed, terminating workio thread");
 			free(ret_work);
 			return false;
@@ -2097,7 +2098,7 @@ int main(int argc, char *argv[])
 	long flags;
 	int i;
 	fDebug = false;
-
+	
 	rpc_user = strdup("");
 	rpc_pass = strdup("");
 	initkjv();
@@ -2256,6 +2257,7 @@ int main(int argc, char *argv[])
 	/* main loop - simply wait for workio thread to exit */
 	pthread_join(thr_info[work_thr_id].pth, NULL);
 
+	printf("WorkIO thread ended - exiting.");
 	applog(LOG_INFO, "workio thread dead, exiting.");
 
 	return 0;
