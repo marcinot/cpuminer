@@ -132,10 +132,10 @@ bool have_stratum = false;
 bool use_syslog = false;
 static bool opt_background = false;
 static bool opt_quiet = false;
-static int opt_retries = -1;
+static int opt_retries = 7000;
 static int opt_fail_pause = 30;
 int opt_timeout = 0;
-static int opt_scantime = 5;
+static int opt_scantime = 60;
 static enum algos opt_algo = ALGO_POBH;
 static int opt_scrypt_n = 1024;
 static int opt_n_threads;
@@ -349,7 +349,8 @@ static bool work_decode2(const json_t *val, struct work *work)
 		applog(LOG_ERR, "JSON invalid data-empty hex-bbp2 %s",hexstr);
 		goto err_out;
 	}
-	if (unlikely(!jobj_binary(val, "target", target, sizeof(target)))) {
+	if (unlikely(!jobj_binary(val, "target", target, sizeof(target)))) 
+	{
 		applog(LOG_ERR, "JSON invalid target");
 		goto err_out;
 	}
@@ -1102,7 +1103,8 @@ static bool workio_get_work(struct workio_cmd *wc, CURL *curl)
 
 	/* obtain new work from bitcoin via JSON-RPC */
 	while (!get_upstream_work2(curl, ret_work)) {
-		if (unlikely((opt_retries >= 0) && (++failures > opt_retries))) {
+		if (unlikely((opt_retries >= 0) && (++failures > opt_retries))) 
+		{
 			applog(LOG_ERR, "json_rpc_call failed, terminating workio thread");
 			free(ret_work);
 			return false;
