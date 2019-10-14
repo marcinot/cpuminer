@@ -179,6 +179,7 @@ struct work_restart {
 	char			padding[128 - sizeof(unsigned long)];
 };
 
+extern int BBP_VERSION;
 extern bool opt_debug;
 extern bool opt_protocol;
 extern bool opt_redirect;

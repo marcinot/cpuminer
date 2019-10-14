@@ -153,27 +153,20 @@ void printme(char *caption, uint32_t bufhash[])
 #ifndef EXTERN_POBH2
 int scanhash_pobh2(int thr_id, uint32_t *pdata, const uint32_t *ptarget, uint32_t max_nonce, unsigned long *hashes_done)
 {
-
 	uint32_t hash[8] __attribute__((aligned(128)));
 	uint32_t endiandata[20] __attribute__((aligned(128)));
-	uint32_t endiandata2[20] __attribute__((aligned(128)));
-	const uint32_t Htarg = ptarget[7];
 	const uint32_t first_nonce = pdata[19];
 	uint32_t nonce = first_nonce;
-		uint8_t pdata8[80] = {0x0};
     bool fLate = false;
  	uint8_t pobhhash[32] = {0x0};
 	uint8_t pobhhash2[32] = {0x0};
-	uint8_t uHash[32] = {0x0};
 	uint32_t finalhash[8] __attribute__((aligned(32)));
-	uint8_t pobhhashr[32] = {0x0};
-	uint8_t origX11[32] = {0x0};
 	uint32_t hash_be[8]= {0x0};
 	for (int k=0; k < 20; k++)
 		endiandata[k] = pdata[k];
 
-	do {
-	 
+	do 
+	{
     	be32enc(&endiandata[19], nonce);
 		x11hash(hash, endiandata);
 		becencode(hash, hash_be);
@@ -181,7 +174,7 @@ int scanhash_pobh2(int thr_id, uint32_t *pdata, const uint32_t *ptarget, uint32_
 		BibleHashV2(pobhhash, fLate);
 	    R256b(pobhhash, pobhhash2);
 		ConvertH8TO32(pobhhash2, finalhash);
-	
+		
 		if (fulltest(finalhash, ptarget)) 
 		{
 			be32enc(&pdata[19], nonce);

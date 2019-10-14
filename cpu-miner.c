@@ -118,6 +118,7 @@ static const char *algo_names[] = {
 	[ALGO_SHA256D]		= "sha256d",
 };
 
+int BBP_VERSION = 1004;
 bool fDebug = false;
 bool opt_debug = false;
 bool opt_protocol = false;
@@ -196,7 +197,6 @@ Options:\n\
   -s, --scantime=N      upper bound on time spent scanning current work when\n\
                           long polling is unavailable, in seconds (default: 5)\n\
       --coinbase-addr=ADDR  payout address for solo mining\n\
-      --coinbase-sig=TEXT  data to insert in the coinbase when possible\n\
       --no-longpoll     disable long polling support\n\
       --no-getwork      disable getwork support\n\
       --no-gbt          disable getblocktemplate support\n\
@@ -237,7 +237,6 @@ static struct option const options[] = {
 	{ "benchmark", 0, NULL, 1005 },
 	{ "cert", 1, NULL, 1001 },
 	{ "coinbase-addr", 1, NULL, 1013 },
-	{ "coinbase-sig", 1, NULL, 1015 },
 	{ "config", 1, NULL, 'c' },
 	{ "debug", 0, NULL, 'D' },
 	{ "help", 0, NULL, 'h' },
@@ -269,7 +268,7 @@ struct work {
 	// initial work structure
 	uint32_t data[32];
 	uint32_t target[8];
-    uint32_t block[2048];
+    uint32_t block[16384];
 	int block_size;
 	int block_size_bytes;
 	int height;
@@ -340,15 +339,24 @@ static bool work_decode2(const json_t *val, struct work *work)
 	uint32_t target[8];
 
 	const char *hexstr;
+	const char *error1;
 	json_t *tmp;
 
 	hexstr=json_string_value(json_object_get(val, "hex"));
+	error1 = json_string_value(json_object_get(val, "error1"));
 
-	if (unlikely(!jobj_binary(val, "hex", work->block, strlen(hexstr)/2))) 
+	if (strlen(error1) > 0)
 	{
-		applog(LOG_ERR, "JSON invalid data-empty hex-bbp2 %s",hexstr);
+		applog(LOG_ERR, "BBP Core Mining Error:  %s", error1);
 		goto err_out;
 	}
+
+	if (strlen(hexstr) < 100 || unlikely(!jobj_binary(val, "hex", work->block, strlen(hexstr)/2))) 
+	{
+		applog(LOG_ERR, "JSON invalid data-empty hex-bbp2 %s", hexstr);
+		goto err_out;
+	}
+
 	if (unlikely(!jobj_binary(val, "target", target, sizeof(target)))) 
 	{
 		applog(LOG_ERR, "JSON invalid target");
@@ -367,7 +375,7 @@ static bool work_decode2(const json_t *val, struct work *work)
 		work->data[i] = work->block[i];
 	for (i = 0; i < ARRAY_SIZE(work->target); i++)
 		work->target[7 - i] = be32dec(target + i);
-
+	
 	uint32_t hash[8] __attribute__((aligned(128)));
 	uint32_t endiandata[20] __attribute__((aligned(128)));
 
@@ -1225,6 +1233,8 @@ static bool get_work(struct thr_info *thr, struct work *work)
 
 	/* copy returned work into storage provided by caller */
 	memcpy(work, work_heap, sizeof(*work));
+	// R Andrews (Sigabrt) - This next line is where we crash with memory heap corruption - the !work_heap doesn't trigger for some reason, but we can't free an unallocated work_heap
+
 	free(work_heap);
 
 	return true;
@@ -1405,7 +1415,6 @@ static void *miner_thread(void *userdata)
 			case ALGO_POBH:
 				// Max nonce pobh:
 				max64 = 0x1fffff;
-//				max64 = 0x00ffff;
 				break;
 			}
 		}
@@ -1817,9 +1826,6 @@ static void parse_arg(int key, char *arg, char *pname)
 	case 'q':
 		opt_quiet = true;
 		break;
-	case '|':
-		fDebug=true;
-		break;
 	case 'D':
 		opt_debug = true;
 		break;
@@ -1937,7 +1943,8 @@ static void parse_arg(int key, char *arg, char *pname)
 	case 'x':;			/* --proxy */
 		// BBP
 		// 
-		
+		printf("Using bbpminer version %d", BBP_VERSION);
+
 		test_suite();
 		uint8_t uHash[32] = {0x0};
 		ArgToUint256(arg, uHash);
@@ -2102,7 +2109,7 @@ int main(int argc, char *argv[])
 	rpc_user = strdup("");
 	rpc_pass = strdup("");
 	initkjv();
-	printf("\nKJV loaded\n");
+	printf("\nKJV Loaded\nUsing bbpminer version %d\n", BBP_VERSION);
 
 	/* parse command line */
 	parse_cmdline(argc, argv);
