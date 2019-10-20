@@ -430,7 +430,7 @@ json_t *json_rpc_call(CURL *curl, const char *url,
 		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_rc);
 		if (!((flags & JSON_RPC_LONGPOLL) && rc == CURLE_OPERATION_TIMEDOUT) &&
 		    !((flags & JSON_RPC_QUIET_404) && http_rc == 404))
-			applog(LOG_ERR, "HTTP request failed: %s", curl_err_str);
+			applog(LOG_ERR, "HTTP request failed[1]: %s", curl_err_str);
 		if (curl_err && (flags & JSON_RPC_QUIET_404) && http_rc == 404)
 			*curl_err = CURLE_OK;
 		goto err_out;
@@ -854,6 +854,7 @@ int timeval_subtract(struct timeval *result, struct timeval *x,
 
 bool fulltest(const uint32_t *hash, const uint32_t *target)
 {
+	static int z = 0;
 	int i;
 	bool rc = true;
 	
@@ -869,6 +870,7 @@ bool fulltest(const uint32_t *hash, const uint32_t *target)
 	}
 
 	if (opt_debug) {
+		z++;
 		uint32_t hash_be[8], target_be[8];
 		char hash_str[65], target_str[65];
 		
@@ -879,7 +881,7 @@ bool fulltest(const uint32_t *hash, const uint32_t *target)
 		bin2hex(hash_str, (unsigned char *)hash_be, 32);
 		bin2hex(target_str, (unsigned char *)target_be, 32);
 
-		if (fDebug)
+		if (z % 512000 == 0)
 		{
 			applog(LOG_DEBUG, "DEBUG: %s\nHash:   %s\nTarget: %s",
 				rc ? "hash <= target"
@@ -983,7 +985,7 @@ bool stratum_socket_full(struct stratum_ctx *sctx, int timeout)
 	return strlen(sctx->sockbuf) || socket_full(sctx->sock, timeout);
 }
 
-#define RBUFSIZE 2048
+#define RBUFSIZE 65535
 #define RECVSIZE (RBUFSIZE - 4)
 
 static void stratum_buffer_append(struct stratum_ctx *sctx, const char *s)
@@ -1336,6 +1338,91 @@ out:
 	return ret;
 }
 
+static bool ConvertHexToBin32(const char *hexstr, void *buf, size_t buflen)
+{
+	if (unlikely(!hexstr) || strlen(hexstr) < buflen) 
+	{
+		applog(LOG_ERR, "hexstr '%s' is not a string", hexstr);
+		return false;
+	}
+
+	if (!hex2bin(buf, hexstr, buflen))
+	{
+		printf("\nDying due to unable to convert to bin type 5 %s", hexstr);
+		return false;
+	}
+	return true;
+}
+
+
+static bool stratum_notify2(struct stratum_ctx *sctx, json_t *params)
+{
+	const char *job_id, *prevhash, *coinb1, *coinb2, *version, *nbits, *ntime;
+	const char *mining_data;
+	size_t coinb1_size, coinb2_size;
+	bool clean, ret = false;
+	int merkle_count, i;
+	json_t *merkle_arr;
+	unsigned char **merkle;
+
+	job_id = json_string_value(json_array_get(params, 0));
+	prevhash = json_string_value(json_array_get(params, 1));
+
+	mining_data = json_string_value(json_array_get(params, 2));
+	coinb2 = json_string_value(json_array_get(params, 3));
+	merkle_arr = json_array_get(params, 4);
+
+	version = json_string_value(json_array_get(params, 5));
+	nbits = json_string_value(json_array_get(params, 6));
+	ntime = json_string_value(json_array_get(params, 7));
+	clean = json_is_true(json_array_get(params, 8));
+
+	if (!job_id || !version || !nbits || !ntime ||
+	    strlen(version) != 8 || strlen(nbits) != 8 || strlen(ntime) != 8) {
+		applog(LOG_ERR, "StratumBBP notify: invalid parameters");
+		printf("jobid %s, version %s, nbits %s, ntime %s\n", job_id, version, nbits, ntime);
+
+		goto out;
+	}
+
+	if (strlen(mining_data) < 100)
+	{
+		applog(LOG_ERR, "Stratum_BBP2 - mining data truncated");
+		goto out;
+	}
+	
+	pthread_mutex_lock(&sctx->work_lock);
+
+	if (!ConvertHexToBin32(mining_data, sctx->block, strlen(mining_data)/2))
+	{
+		applog(LOG_ERR, "Stratum_BBP3 - mining data truncated");
+		goto out;
+	}
+
+	if (fDebug)
+		printf("\nBIBLEPAY::Notify2_Stratum Mining Block %s", mining_data);
+	sctx->block_size_bytes = strlen(mining_data)/2;
+
+	free(sctx->job.job_id);
+	sctx->job.job_id = strdup(job_id);
+	
+	hex2bin(sctx->job.version, version, 4);
+	hex2bin(sctx->job.nbits, nbits, 4);
+	hex2bin(sctx->job.ntime, ntime, 4);
+
+	hex2bin(sctx->job.prevhash, mining_data + 72, 32);
+	sctx->job.clean = clean;
+	sctx->job.diff = sctx->next_diff;
+	
+	pthread_mutex_unlock(&sctx->work_lock);
+
+	ret = true;
+
+out:
+	return ret;
+}
+
+
 static bool stratum_notify(struct stratum_ctx *sctx, json_t *params)
 {
 	const char *job_id, *prevhash, *coinb1, *coinb2, *version, *nbits, *ntime;
@@ -1536,7 +1623,7 @@ bool stratum_handle_method(struct stratum_ctx *sctx, const char *s)
 	params = json_object_get(val, "params");
 
 	if (!strcasecmp(method, "mining.notify")) {
-		ret = stratum_notify(sctx, params);
+		ret = stratum_notify2(sctx, params);
 		goto out;
 	}
 	if (!strcasecmp(method, "mining.set_difficulty")) {

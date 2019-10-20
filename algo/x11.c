@@ -178,7 +178,7 @@ int scanhash_pobh2(int thr_id, uint32_t *pdata, const uint32_t *ptarget, uint32_
 		if (fulltest(finalhash, ptarget)) 
 		{
 			be32enc(&pdata[19], nonce);
-			if (fDebug)
+			if (opt_debug)
 			{
 				printme2("\n SOLUTION FOUND !!!! \nx11", hash);
 				printme2("bbphash\n", finalhash);

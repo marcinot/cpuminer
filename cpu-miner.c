@@ -118,7 +118,8 @@ static const char *algo_names[] = {
 	[ALGO_SHA256D]		= "sha256d",
 };
 
-int BBP_VERSION = 1004;
+int BBP_VERSION = 1005;
+bool fSolo = false;
 bool fDebug = false;
 bool opt_debug = false;
 bool opt_protocol = false;
@@ -227,7 +228,7 @@ static char const short_options[] =
 #ifdef HAVE_SYSLOG_H
 	"S"
 #endif
-	"a:c:Dhp:Px:qr:R:s:t:T:o:u:O:V";
+	"a:c:Dhp:Px:qr:R:s:t:T:o:u:O:V:L";
 
 static struct option const options[] = {
 	{ "algo", 1, NULL, 'a' },
@@ -252,6 +253,7 @@ static struct option const options[] = {
 	{ "retries", 1, NULL, 'r' },
 	{ "retry-pause", 1, NULL, 'R' },
 	{ "scantime", 1, NULL, 's' },
+	{ "solomining",1,NULL, 'L' },
 #ifdef HAVE_SYSLOG_H
 	{ "syslog", 0, NULL, 'S' },
 #endif
@@ -268,8 +270,7 @@ struct work {
 	// initial work structure
 	uint32_t data[32];
 	uint32_t target[8];
-    uint32_t block[16384];
-	int block_size;
+    uint32_t block[128000];
 	int block_size_bytes;
 	int height;
 	char *txs;
@@ -333,6 +334,7 @@ static bool jobj_binary(const json_t *obj, const char *key,
 }
 
 
+
 static bool work_decode2(const json_t *val, struct work *work)
 {
 	int i;
@@ -342,12 +344,12 @@ static bool work_decode2(const json_t *val, struct work *work)
 	const char *error1;
 	json_t *tmp;
 
-	hexstr=json_string_value(json_object_get(val, "hex"));
+	hexstr = json_string_value(json_object_get(val, "hex"));
 	error1 = json_string_value(json_object_get(val, "error1"));
 
 	if (strlen(error1) > 0)
 	{
-		applog(LOG_ERR, "BBP Core Mining Error:  %s", error1);
+		applog(LOG_ERR, "\nBBP Core Mining Error:  %s", error1);
 		goto err_out;
 	}
 
@@ -362,14 +364,15 @@ static bool work_decode2(const json_t *val, struct work *work)
 		applog(LOG_ERR, "JSON invalid target");
 		goto err_out;
 	}
-	work->block_size = strlen(hexstr)/8;
 	work->block_size_bytes = strlen(hexstr)/2;
 
 	char *myBlock = malloc((work->block_size_bytes * 2 )+ 1);
 
 	bin2hex(myBlock, (unsigned char *)work->block, work->block_size_bytes);
 	if (fDebug)
-		printf("[hashing ] [%s] \n\n\n",myBlock);
+		printf("[hashing] [%s] \n",myBlock);
+
+	free(myBlock);
 
 	for (i = 0; i < 20; i++)
 		work->data[i] = work->block[i];
@@ -384,13 +387,61 @@ static bool work_decode2(const json_t *val, struct work *work)
 
 	x11hash(hash, endiandata);
     if (fDebug)
-		printme2("\nThis is my downloaded x11 hash \n", hash);
+		printme2("\nStart x11 hash \n", hash);
 
 	return true;
 
 err_out:
-	printf("\nErroring out \n");
 	return false;
+}
+
+
+static void stratum_gen_work2(struct stratum_ctx *sctx, struct work *work)
+{
+	pthread_mutex_lock(&sctx->work_lock);
+
+	free(work->job_id);
+	work->job_id = strdup(sctx->job.job_id);
+
+	/* Assemble block header */
+	memset(work->data, 0, 128);
+
+	work->block_size_bytes = sctx->block_size_bytes;
+	char *myBlock = malloc((work->block_size_bytes * 2) + 1);
+	for (int i = 0; i < ARRAY_SIZE(sctx->block); i++)
+	{
+		work->block[i] = sctx->block[i];
+	}
+	bin2hex(myBlock, (unsigned char *)work->block, work->block_size_bytes);
+	if (fDebug)
+		printf("\n[stratum-gen-work2 -- hashing] [%s] \n",myBlock);
+
+	free(myBlock);
+
+	for (int i = 0; i < 20; i++)
+		work->data[i] = work->block[i];
+
+	diff_to_target(work->target, sctx->job.diff);
+
+	uint32_t hash[8] __attribute__((aligned(128)));
+	uint32_t endiandata[20] __attribute__((aligned(128)));
+
+	for (int k=0; k < 20; k++)
+		endiandata[k]= work->data[k];
+
+	x11hash(hash, endiandata);
+    if (fDebug)
+		printme2("\nStratum Start x11 hash \n", hash);
+
+	pthread_mutex_unlock(&sctx->work_lock);
+
+	if (opt_debug) 
+	{
+		applog(LOG_DEBUG, "\nBBP-DEBUG: job_id='%s' ntime=%08x, bits=%08x, target=%08x\n",
+		       work->job_id, swab32(work->data[17]), swab32(work->data[18]), work->target);
+		
+	}
+
 }
 
 
@@ -791,8 +842,8 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 	/* pass if the previous hash is not the current previous hash */
 	if (!submit_old && memcmp(work->data + 1, g_work.data + 1, 32)) {
 	
-		if (opt_debug)
-			applog(LOG_DEBUG, "DEBUG: stale work detected, discarding");
+		if (opt_debug || true)
+			applog(LOG_DEBUG, "*** DEBUG: stale work detected, discarding");
 		return true;
 	}
 
@@ -806,10 +857,34 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 		bin2hex(ntimestr, (const unsigned char *)(&ntime), 4);
 		bin2hex(noncestr, (const unsigned char *)(&nonce), 4);
 		xnonce2str = abin2hex(work->xnonce2, work->xnonce2_len);
-		req = malloc(256 + strlen(rpc_user) + strlen(work->job_id) + 2 * work->xnonce2_len);
+		// BBP
+		uint32_t endiandata[20] __attribute__((aligned(128)));
+		uint32_t hash[8] __attribute__((aligned(128)));
+		for (int k=0; k < 20; k++)
+			endiandata[k] = work->data[k];
+		x11hash(hash, endiandata);
+		// R Andrews: Ensure this is truncated at 160 bytes (for the header) when we add funded ABNs
+		// Little endian:
+		for (i = 0; i < ARRAY_SIZE(work->data); i++)
+			le32enc(work->data + i, work->data[i]);
+	
+		// copy the solution into the work block
+		for (i = 0; i < 20; i++)
+		{
+			work->block[i] = work->data[i];
+		}
+
+		char mySubmission[(work->block_size_bytes*2) + 128];
+
+		bin2hex(mySubmission, (unsigned char *)work->block, work->block_size_bytes);
+	
+		if (fDebug)
+			printf("\nSubmitting x11 &s, Time %s, Nonce2 %s, Header %s\n", hash, ntimestr, noncestr, mySubmission);
+
+		req = malloc(strlen(mySubmission) + 128 + 256 + strlen(rpc_user) + strlen(work->job_id) + 2 * work->xnonce2_len);
 		sprintf(req,
 			"{\"method\": \"mining.submit\", \"params\": [\"%s\", \"%s\", \"%s\", \"%s\", \"%s\"], \"id\":4}",
-			rpc_user, work->job_id, xnonce2str, ntimestr, noncestr);
+			rpc_user, work->job_id, mySubmission, ntimestr, noncestr);
 		free(xnonce2str);
 
 		rc = stratum_send_line(&stratum, req);
@@ -933,7 +1008,6 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 			free(res_str);
 		} else
 		{
-			printf("SUBMITBLOCK RESULT NULL\n");
 			share_result(json_is_null(res), json_string_value(res));
 		}
 		
@@ -963,80 +1037,17 @@ static const char *gbt_lp_req =
 	"{\"method\": \"getblocktemplate\", \"params\": [{\"capabilities\": "
 	GBT_CAPABILITIES ", \"rules\": " GBT_RULES ", \"longpollid\": \"%s\"}], \"id\":0}\r\n";
 
-
-static bool get_upstream_work2(CURL *curl, struct work *work)
-{
-	json_t *val;
-	int err;
-	bool rc;
-	struct timeval tv_start, tv_end, diff;
-
-start:
-	gettimeofday(&tv_start, NULL);
-	val = json_rpc_call(curl, rpc_url, rpc_userpass,
-			    getwork_req_bbp,
-			    &err, have_gbt ? JSON_RPC_QUIET_404 : 0);
-	gettimeofday(&tv_end, NULL);
-
-	if (have_stratum) {
-		if (val)
-			json_decref(val);
-		return true;
-	}
-
-	if (!have_gbt && !allow_getwork) {
-		applog(LOG_ERR, "No usable protocol");
-		if (val)
-			json_decref(val);
-		return false;
-	}
-
-	if (have_gbt && !val && err == CURLE_OK) {
-		applog(LOG_INFO, "getblocktemplate-stratum-bbp failed, falling back to getwork");
-		have_gbt = false;
-		goto start;
-	}
-
-	if (!val)
-	{
-		return false;
-	}
-
-	if (have_gbt) 
-	{
-		json_t *reason1 = json_object_get(json_object_get(val, "result"),"hex");
-		
-		rc = work_decode2(json_object_get(val, "result"), work);
-		if (!have_gbt) {
-			json_decref(val);
-			goto start;
-		}
-	} 
-
-	if (opt_debug && rc) {
-		timeval_subtract(&diff, &tv_end, &tv_start);
-		applog(LOG_DEBUG, "DEBUG: got new work in %d ms",
-		       diff.tv_sec * 1000 + diff.tv_usec / 1000);
-	}
-	
-	json_decref(val);
-
-	return rc;
-}
-
-
-
 static bool get_upstream_work(CURL *curl, struct work *work)
 {
 	json_t *val;
 	int err;
 	bool rc;
 	struct timeval tv_start, tv_end, diff;
-
+	 		  
 start:
 	gettimeofday(&tv_start, NULL);
 	val = json_rpc_call(curl, rpc_url, rpc_userpass,
-			    have_gbt ? gbt_req : getwork_req,
+			    have_gbt ? getwork_req_bbp : getwork_req_bbp,
 			    &err, have_gbt ? JSON_RPC_QUIET_404 : 0);
 	gettimeofday(&tv_end, NULL);
 
@@ -1062,8 +1073,10 @@ start:
 	if (!val)
 		return false;
 
-	if (have_gbt) {
-		rc = gbt_work_decode(json_object_get(val, "result"), work);
+
+	if (have_gbt && fSolo) 
+	{
+		rc = work_decode2(json_object_get(val, "result"), work);
 		if (!have_gbt) {
 			json_decref(val);
 			goto start;
@@ -1109,8 +1122,8 @@ static bool workio_get_work(struct workio_cmd *wc, CURL *curl)
 	if (!ret_work)
 		return false;
 
-	/* obtain new work from bitcoin via JSON-RPC */
-	while (!get_upstream_work2(curl, ret_work)) {
+	while (!get_upstream_work(curl, ret_work)) 
+	{
 		if (unlikely((opt_retries >= 0) && (++failures > opt_retries))) 
 		{
 			printf("Optional retries exceeded; terminating workio thread");
@@ -1361,19 +1374,23 @@ static void *miner_thread(void *userdata)
 		int64_t max64;
 		int rc;
 
-		if (have_stratum) {
+		if (have_stratum) 
+		{
+		
 			while (time(NULL) >= g_work_time + 120)
 				sleep(1);
 			pthread_mutex_lock(&g_work_lock);
 			if (work.data[19] >= end_nonce && !memcmp(work.data, g_work.data, 76))
-				stratum_gen_work(&stratum, &g_work);
-		} else {
+				stratum_gen_work2(&stratum, &g_work);
+		} 
+		else 
+		{
 			int min_scantime = have_longpoll ? LP_SCANTIME : opt_scantime;
 			/* obtain new work from internal workio thread */
 			pthread_mutex_lock(&g_work_lock);
-			if (!have_stratum &&
-			    (time(NULL) - g_work_time >= min_scantime ||
-			     work.data[19] >= end_nonce)) {
+			if (!have_stratum && fSolo && (time(NULL) - g_work_time >= min_scantime ||
+			     work.data[19] >= end_nonce)) 
+			{
 				work_free(&g_work);
 				if (unlikely(!get_work(mythr, &g_work))) {
 					applog(LOG_ERR, "work retrieval failed, exiting "
@@ -1401,8 +1418,7 @@ static void *miner_thread(void *userdata)
 		if (have_stratum)
 			max64 = LP_SCANTIME;
 		else
-			max64 = g_work_time + (have_longpoll ? LP_SCANTIME : opt_scantime)
-			      - time(NULL);
+			max64 = g_work_time + (have_longpoll ? LP_SCANTIME : opt_scantime) - time(NULL);
 		max64 *= thr_hashrates[thr_id];
 		if (max64 <= 0) {
 			switch (opt_algo) {
@@ -1472,7 +1488,13 @@ static void *miner_thread(void *userdata)
 			}
 		}
 
-		/* if nonce found, submit work */
+		if (hashes_done < 3)
+		{
+			if (!fSolo && fDebug)
+				printf("Waiting for more stratum work...\n***");
+			sleep(5);
+		}
+
 		if (rc && !opt_benchmark && !submit_work(mythr, &work))
 			break;
 	}
@@ -1657,10 +1679,10 @@ static void *stratum_thread(void *userdata)
 			}
 		}
 
-		if (stratum.job.job_id &&
+		if (stratum.job.job_id && 
 		    (!g_work_time || strcmp(stratum.job.job_id, g_work.job_id))) {
 			pthread_mutex_lock(&g_work_lock);
-			stratum_gen_work(&stratum, &g_work);
+			stratum_gen_work2(&stratum, &g_work);
 			time(&g_work_time);
 			pthread_mutex_unlock(&g_work_lock);
 			if (stratum.job.clean) {
@@ -1855,6 +1877,18 @@ static void parse_arg(int key, char *arg, char *pname)
 			show_usage_and_exit(1);
 		opt_scantime = v;
 		break;
+	case 'L':
+		v = atoi(arg);
+		if (v < 1 || v > 9999)	/* sanity check */
+			show_usage_and_exit(1);
+		
+		if (v==1)
+		{
+			fSolo = false;
+			fDebug = true;
+		}
+		printf("Solo  mining %d", v);
+		break;
 	case 'T':
 		v = atoi(arg);
 		if (v < 1 || v > 99999)	/* sanity check */
@@ -1899,7 +1933,8 @@ static void parse_arg(int key, char *arg, char *pname)
 			*hp++ = '@';
 		} else
 			hp = ap;
-		if (ap != arg) {
+		if (ap != arg) 
+		{
 			if (strncasecmp(arg, "http://", 7) &&
 			    strncasecmp(arg, "https://", 8) &&
 			    strncasecmp(arg, "stratum+tcp://", 14) &&
@@ -1922,6 +1957,10 @@ static void parse_arg(int key, char *arg, char *pname)
 			sprintf(rpc_url, "http://%s", hp);
 		}
 		have_stratum = !opt_benchmark && !strncasecmp(rpc_url, "stratum", 7);
+
+		fSolo = strncasecmp(rpc_url, "stratum+tcp://", 14);
+		printf("\nsolo mining %d\n", fSolo);
+
 		break;
 	}
 	case 'O':			/* --userpass */

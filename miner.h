@@ -232,9 +232,9 @@ struct stratum_job {
 	double diff;
 };
 
-struct stratum_ctx {
+struct stratum_ctx 
+{
 	char *url;
-
 	CURL *curl;
 	char *curl_url;
 	char curl_err_str[CURL_ERROR_SIZE];
@@ -242,15 +242,15 @@ struct stratum_ctx {
 	size_t sockbuf_size;
 	char *sockbuf;
 	pthread_mutex_t sock_lock;
-
 	double next_diff;
-
 	char *session_id;
 	size_t xnonce1_size;
 	unsigned char *xnonce1;
 	size_t xnonce2_size;
 	struct stratum_job job;
 	pthread_mutex_t work_lock;
+	uint32_t block[128000];
+	int block_size_bytes;
 };
 
 bool stratum_socket_full(struct stratum_ctx *sctx, int timeout);
