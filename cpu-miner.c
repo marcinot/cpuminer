@@ -118,7 +118,7 @@ static const char *algo_names[] = {
 	[ALGO_SHA256D]		= "sha256d",
 };
 
-int BBP_VERSION = 1005;
+int BBP_VERSION = 1006;
 bool fSolo = false;
 bool fDebug = false;
 bool opt_debug = false;
@@ -270,7 +270,7 @@ struct work {
 	// initial work structure
 	uint32_t data[32];
 	uint32_t target[8];
-    uint32_t block[128000];
+    uint32_t block[1000000];
 	int block_size_bytes;
 	int height;
 	char *txs;
