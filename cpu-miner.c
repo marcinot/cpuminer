@@ -118,7 +118,7 @@ static const char *algo_names[] = {
 	[ALGO_SHA256D]		= "sha256d",
 };
 
-int BBP_VERSION = 1006;
+int BBP_VERSION = 1007;
 bool fSolo = false;
 bool fDebug = false;
 bool opt_debug = false;
@@ -270,14 +270,13 @@ struct work {
 	// initial work structure
 	uint32_t data[32];
 	uint32_t target[8];
-    uint32_t block[1000000];
-	int block_size_bytes;
 	int height;
 	char *txs;
 	char *workid;
 	char *job_id;
 	size_t xnonce2_len;
 	unsigned char *xnonce2;
+	char *block;
 };
 
 static struct work g_work;
@@ -292,6 +291,8 @@ static inline void work_free(struct work *w)
 	free(w->workid);
 	free(w->job_id);
 	free(w->xnonce2);
+	free(w->block);
+
 }
 
 static inline void work_copy(struct work *dest, const struct work *src)
@@ -299,6 +300,8 @@ static inline void work_copy(struct work *dest, const struct work *src)
 	memcpy(dest, src, sizeof(struct work));
 	if (src->txs)
 		dest->txs = strdup(src->txs);
+	if (src->block)
+		dest->block = strdup(src->block);
 	if (src->workid)
 		dest->workid = strdup(src->workid);
 	if (src->job_id)
@@ -308,6 +311,23 @@ static inline void work_copy(struct work *dest, const struct work *src)
 		memcpy(dest->xnonce2, src->xnonce2, src->xnonce2_len);
 	}
 }
+
+static bool ConvertHexToBin32(const char *hexstr, void *buf, size_t buflen)
+{
+	if (strlen(hexstr) < buflen) 
+	{
+		printf("\nhexstr '%s' is not a string", hexstr);
+		return false;
+	}
+
+	if (!hex2bin(buf, hexstr, buflen))
+	{
+		printf("\nDying due to unable to convert to bin type 5 %s", hexstr);
+		return false;
+	}
+	return true;
+}
+
 
 static bool jobj_binary(const json_t *obj, const char *key,
 			void *buf, size_t buflen)
@@ -337,6 +357,8 @@ static bool jobj_binary(const json_t *obj, const char *key,
 
 static bool work_decode2(const json_t *val, struct work *work)
 {
+	// Solo mining and received new getblockforstratum
+	
 	int i;
 	uint32_t target[8];
 
@@ -353,8 +375,9 @@ static bool work_decode2(const json_t *val, struct work *work)
 		goto err_out;
 	}
 
-	if (strlen(hexstr) < 100 || unlikely(!jobj_binary(val, "hex", work->block, strlen(hexstr)/2))) 
+	if (strlen(hexstr) < 160) 
 	{
+		printf("\njson invalid data-empty hex-bbp2\n");
 		applog(LOG_ERR, "JSON invalid data-empty hex-bbp2 %s", hexstr);
 		goto err_out;
 	}
@@ -364,18 +387,31 @@ static bool work_decode2(const json_t *val, struct work *work)
 		applog(LOG_ERR, "JSON invalid target");
 		goto err_out;
 	}
-	work->block_size_bytes = strlen(hexstr)/2;
 
-	char *myBlock = malloc((work->block_size_bytes * 2 )+ 1);
-
-	bin2hex(myBlock, (unsigned char *)work->block, work->block_size_bytes);
+	free(work->block);
+	work->block = calloc(strlen(hexstr) + 128, 1);
 	if (fDebug)
-		printf("[hashing] [%s] \n",myBlock);
+		printf("\nFreeing work block \n");
 
-	free(myBlock);
+	for (i = 0; i < strlen(hexstr); i++)
+	{
+		work->block[i] = hexstr[i];
+	}
 
-	for (i = 0; i < 20; i++)
-		work->data[i] = work->block[i];
+	char blockPrefix[161] = {0x0};
+	for (int i = 0; i < (80*2); i++)
+	{
+		blockPrefix[i] = hexstr[i];
+	}
+
+	if (!ConvertHexToBin32(blockPrefix, work->data, 80))
+	{
+		printf("\nUnable to convert hex to binary in work decode2.\n");
+	}
+
+	if (fDebug)
+		printf("[hashing] [%s] \n", hexstr);
+
 	for (i = 0; i < ARRAY_SIZE(work->target); i++)
 		work->target[7 - i] = be32dec(target + i);
 	
@@ -398,28 +434,47 @@ err_out:
 
 static void stratum_gen_work2(struct stratum_ctx *sctx, struct work *work)
 {
+	// Received new stratum work 
+
 	pthread_mutex_lock(&sctx->work_lock);
 
 	free(work->job_id);
 	work->job_id = strdup(sctx->job.job_id);
 
+
+	
+
+	if (strlen(sctx->block) < 160)
+	{
+		printf("\nError in stratum-gen-work2; poolhex too short\n");
+	}
+
 	/* Assemble block header */
 	memset(work->data, 0, 128);
 
-	work->block_size_bytes = sctx->block_size_bytes;
-	char *myBlock = malloc((work->block_size_bytes * 2) + 1);
-	for (int i = 0; i < ARRAY_SIZE(sctx->block); i++)
+
+	free(work->block);
+	work->block = calloc(strlen(sctx->block) + 1, 1);
+
+
+	for (int i = 0; i < strlen(sctx->block); i++)
 	{
 		work->block[i] = sctx->block[i];
 	}
-	bin2hex(myBlock, (unsigned char *)work->block, work->block_size_bytes);
+
 	if (fDebug)
-		printf("\n[stratum-gen-work2 -- hashing] [%s] \n",myBlock);
+		printf("\n[stratum-gen-work2 -- hashing] [%s] \n", work->block);
 
-	free(myBlock);
+	char blockPrefix[161] = {0x0};
+	for (int i = 0; i < (80*2); i++)
+	{
+		blockPrefix[i] = sctx->block[i];
+	}
 
-	for (int i = 0; i < 20; i++)
-		work->data[i] = work->block[i];
+	if (!ConvertHexToBin32(blockPrefix, work->data, 80))
+	{
+		printf("\nUnable to convert hex to binary in stratumgenwork.\n");
+	}
 
 	diff_to_target(work->target, sctx->job.diff);
 
@@ -437,11 +492,10 @@ static void stratum_gen_work2(struct stratum_ctx *sctx, struct work *work)
 
 	if (opt_debug) 
 	{
-		applog(LOG_DEBUG, "\nBBP-DEBUG: job_id='%s' ntime=%08x, bits=%08x, target=%08x\n",
-		       work->job_id, swab32(work->data[17]), swab32(work->data[18]), work->target);
+		applog(LOG_DEBUG, "\nBBP-DEBUG: job_id='%s' ntime=%08x, bits=%08x, target=%08x, hex=%s  \n",
+		       work->job_id, swab32(work->data[17]), swab32(work->data[18]), work->target, work->block);
 		
 	}
-
 }
 
 
@@ -842,7 +896,7 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 	/* pass if the previous hash is not the current previous hash */
 	if (!submit_old && memcmp(work->data + 1, g_work.data + 1, 32)) {
 	
-		if (opt_debug || true)
+		if (opt_debug)
 			applog(LOG_DEBUG, "*** DEBUG: stale work detected, discarding");
 		return true;
 	}
@@ -867,19 +921,34 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 		// Little endian:
 		for (i = 0; i < ARRAY_SIZE(work->data); i++)
 			le32enc(work->data + i, work->data[i]);
-	
-		// copy the solution into the work block
-		for (i = 0; i < 20; i++)
+		
+		if (strlen(work->block) < 160)
 		{
-			work->block[i] = work->data[i];
+			printf("\nmissing data %s\n ", work->block);
+
+			applog(LOG_ERR, "submit_upstream_work::3 stratum_send_line failed - truncated hex");
+			goto out;
+		}
+		char mySubmission[strlen(work->block) + 128];
+
+		memset(mySubmission, 0, sizeof mySubmission);
+		
+		for (i = 0; i < strlen(work->block); i++)
+		{
+			mySubmission[i] = work->block[i];
 		}
 
-		char mySubmission[(work->block_size_bytes*2) + 128];
 
-		bin2hex(mySubmission, (unsigned char *)work->block, work->block_size_bytes);
-	
-		if (fDebug)
-			printf("\nSubmitting x11 &s, Time %s, Nonce2 %s, Header %s\n", hash, ntimestr, noncestr, mySubmission);
+		char myBlock[161] = {0x0};
+		bin2hex(myBlock, (unsigned char *)work->data, 80);
+		// copy the solution into the work block
+		for (i = 0; i < (80*2); i++)
+		{
+			mySubmission[i] = myBlock[i];
+		}
+
+		if (fDebug || opt_debug)
+		      printf("\nSubmitting Header %s\n", mySubmission);
 
 		req = malloc(strlen(mySubmission) + 128 + 256 + strlen(rpc_user) + strlen(work->job_id) + 2 * work->xnonce2_len);
 		sprintf(req,
@@ -953,24 +1022,32 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 	}
 	else 
 	{
-		// This area handles submission of blocks with or without ABN's using 'submitblock'
+		// This area handles submission of solo mined blocks with or without ABN's using 'submitblock'
 		/* build hex string */
 		//First insert the entire block as it came to us
 		for (i = 0; i < ARRAY_SIZE(work->data); i++)
 			le32enc(work->data + i, work->data[i]);
 	
-		// copy the solution into the work block
-		for (i = 0; i < 20; i++)
+		char data_str2[strlen(work->block) + 128];
+		memset(data_str2, 0, sizeof data_str2);
+	
+		for (i = 0; i < strlen(work->block); i++)
 		{
-			work->block[i] = work->data[i];
+			data_str2[i] = work->block[i];
 		}
-		char data_str2[(work->block_size_bytes*2) + 128];
 
-		bin2hex(data_str2, (unsigned char *)work->block, work->block_size_bytes);
+		char myBlock[161] = {0x0};
+		bin2hex(myBlock, (unsigned char *)work->data, 80);
+		// copy the solution into the work block
+		for (i = 0; i < (80*2); i++)
+		{
+			data_str2[i] = myBlock[i];
+		}
+
 		char *req;
 
 		// malloc for the biggie
-		req = malloc((work->block_size_bytes*2) + 128);
+		req = malloc(strlen(work->block) + 256);
 		sprintf(req,
 				"{\"method\": \"submitblock\", \"params\": [\"%s\"], \"id\":1}\r\n",
 				data_str2);
@@ -1878,16 +1955,7 @@ static void parse_arg(int key, char *arg, char *pname)
 		opt_scantime = v;
 		break;
 	case 'L':
-		v = atoi(arg);
-		if (v < 1 || v > 9999)	/* sanity check */
-			show_usage_and_exit(1);
-		
-		if (v==1)
-		{
-			fSolo = false;
-			fDebug = true;
-		}
-		printf("Solo  mining %d", v);
+		fDebug = true;
 		break;
 	case 'T':
 		v = atoi(arg);

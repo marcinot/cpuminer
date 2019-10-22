@@ -881,7 +881,7 @@ bool fulltest(const uint32_t *hash, const uint32_t *target)
 		bin2hex(hash_str, (unsigned char *)hash_be, 32);
 		bin2hex(target_str, (unsigned char *)target_be, 32);
 
-		if (z % 512000 == 0)
+		if (fDebug && z % 512000 == 0)
 		{
 			applog(LOG_DEBUG, "DEBUG: %s\nHash:   %s\nTarget: %s",
 				rc ? "hash <= target"
@@ -985,7 +985,7 @@ bool stratum_socket_full(struct stratum_ctx *sctx, int timeout)
 	return strlen(sctx->sockbuf) || socket_full(sctx->sock, timeout);
 }
 
-#define RBUFSIZE 65535
+#define RBUFSIZE 2048
 #define RECVSIZE (RBUFSIZE - 4)
 
 static void stratum_buffer_append(struct stratum_ctx *sctx, const char *s)
@@ -1338,11 +1338,12 @@ out:
 	return ret;
 }
 
+
 static bool ConvertHexToBin32(const char *hexstr, void *buf, size_t buflen)
 {
-	if (unlikely(!hexstr) || strlen(hexstr) < buflen) 
+	if (strlen(hexstr) < buflen) 
 	{
-		applog(LOG_ERR, "hexstr '%s' is not a string", hexstr);
+		printf("\nhexstr '%s' is not a string", hexstr);
 		return false;
 	}
 
@@ -1364,10 +1365,10 @@ static bool stratum_notify2(struct stratum_ctx *sctx, json_t *params)
 	int merkle_count, i;
 	json_t *merkle_arr;
 	unsigned char **merkle;
-
+	
 	job_id = json_string_value(json_array_get(params, 0));
 	prevhash = json_string_value(json_array_get(params, 1));
-
+	
 	mining_data = json_string_value(json_array_get(params, 2));
 	coinb2 = json_string_value(json_array_get(params, 3));
 	merkle_arr = json_array_get(params, 4);
@@ -1376,6 +1377,8 @@ static bool stratum_notify2(struct stratum_ctx *sctx, json_t *params)
 	nbits = json_string_value(json_array_get(params, 6));
 	ntime = json_string_value(json_array_get(params, 7));
 	clean = json_is_true(json_array_get(params, 8));
+
+	// From nomp to the miner, via stratum:
 
 	if (!job_id || !version || !nbits || !ntime ||
 	    strlen(version) != 8 || strlen(nbits) != 8 || strlen(ntime) != 8) {
@@ -1393,15 +1396,15 @@ static bool stratum_notify2(struct stratum_ctx *sctx, json_t *params)
 	
 	pthread_mutex_lock(&sctx->work_lock);
 
-	if (!ConvertHexToBin32(mining_data, sctx->block, strlen(mining_data)/2))
+	free(sctx->block);
+	sctx->block = calloc(strlen(mining_data) + 128, 1);
+	for (i = 0; i < strlen(mining_data); i++)
 	{
-		applog(LOG_ERR, "Stratum_BBP3 - mining data truncated");
-		goto out;
+		sctx->block[i] = mining_data[i];
 	}
 
 	if (fDebug)
 		printf("\nBIBLEPAY::Notify2_Stratum Mining Block %s", mining_data);
-	sctx->block_size_bytes = strlen(mining_data)/2;
 
 	free(sctx->job.job_id);
 	sctx->job.job_id = strdup(job_id);

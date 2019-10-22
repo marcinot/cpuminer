@@ -249,8 +249,7 @@ struct stratum_ctx
 	size_t xnonce2_size;
 	struct stratum_job job;
 	pthread_mutex_t work_lock;
-	uint32_t block[1000000];
-	int block_size_bytes;
+	char *block;
 };
 
 bool stratum_socket_full(struct stratum_ctx *sctx, int timeout);
