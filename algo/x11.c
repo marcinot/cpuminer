@@ -156,6 +156,8 @@ int scanhash_pobh2(int thr_id, uint32_t *pdata, const uint32_t *ptarget, uint32_
 	uint32_t hash[8] __attribute__((aligned(128)));
 	uint32_t endiandata[20] __attribute__((aligned(128)));
 	const uint32_t first_nonce = pdata[19];
+	const uint32_t starttime = pdata[17] + thr_id;
+	be32enc(&pdata[17], starttime);
 	uint32_t nonce = first_nonce;
     bool fLate = false;
  	uint8_t pobhhash[32] = {0x0};

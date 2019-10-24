@@ -118,7 +118,7 @@ static const char *algo_names[] = {
 	[ALGO_SHA256D]		= "sha256d",
 };
 
-int BBP_VERSION = 1007;
+int BBP_VERSION = 1008;
 bool fSolo = false;
 bool fDebug = false;
 bool opt_debug = false;
@@ -440,10 +440,7 @@ static void stratum_gen_work2(struct stratum_ctx *sctx, struct work *work)
 
 	free(work->job_id);
 	work->job_id = strdup(sctx->job.job_id);
-
-
 	
-
 	if (strlen(sctx->block) < 160)
 	{
 		printf("\nError in stratum-gen-work2; poolhex too short\n");
@@ -885,6 +882,17 @@ static void share_result(int result, const char *reason)
 		applog(LOG_DEBUG, "DEBUG2: reject reason: %s", reason);
 }
 
+static bool LiteTest(uint32_t a1[8], uint32_t a2[8])
+{
+	for (int z = 0; z < 8; z++)
+	{
+		if (a1[z] != a2[z])
+			return false;
+	}
+	return true;
+}
+
+static uint32_t last_submitted_hash[8] __attribute__((aligned(128)));
 static bool submit_upstream_work(CURL *curl, struct work *work)
 {
 	json_t *val, *res, *reason;
@@ -917,6 +925,19 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 		for (int k=0; k < 20; k++)
 			endiandata[k] = work->data[k];
 		x11hash(hash, endiandata);
+
+		if (LiteTest(hash, last_submitted_hash))
+		{
+			for (i = 0; i < strlen(work->block); i++)
+			{
+				work->block[i] = 0;
+			}
+			sleep(3);
+			if (opt_debug)
+				applog(LOG_DEBUG, "*** Duplicate share detected, resuming thread at a new hash.");
+			return true;
+		}
+
 		// R Andrews: Ensure this is truncated at 160 bytes (for the header) when we add funded ABNs
 		// Little endian:
 		for (i = 0; i < ARRAY_SIZE(work->data); i++)
@@ -957,11 +978,16 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 		free(xnonce2str);
 
 		rc = stratum_send_line(&stratum, req);
+
 		free(req);
 		if (unlikely(!rc)) {
 			applog(LOG_ERR, "submit_upstream_work stratum_send_line failed");
 			goto out;
 		}
+
+		for (int k = 0; k < 8; k++)
+			last_submitted_hash[k] = hash[k];
+
 	}
 	else if (work->txs) 
 	{
@@ -1354,6 +1380,7 @@ static bool submit_work(struct thr_info *thr, const struct work *work_in)
 	return true;
 
 err_out:
+	printf("\nunable to send work to server.");
 	workio_cmd_free(wc);
 	return false;
 }
@@ -1572,8 +1599,13 @@ static void *miner_thread(void *userdata)
 			sleep(5);
 		}
 
-		if (rc && !opt_benchmark && !submit_work(mythr, &work))
-			break;
+		if (rc && !opt_benchmark)
+		{
+			bool fSubmitted = submit_work(mythr, &work);
+			if (!fSubmitted)
+				break;
+			
+		}
 	}
 
 out:
