@@ -118,7 +118,7 @@ static const char *algo_names[] = {
 	[ALGO_SHA256D]		= "sha256d",
 };
 
-int BBP_VERSION = 1008;
+int BBP_VERSION = 1009;
 bool fSolo = false;
 bool fDebug = false;
 bool opt_debug = false;
@@ -913,8 +913,8 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 	{
 		uint32_t ntime, nonce;
 		char ntimestr[9], noncestr[9], *xnonce2str, *req;
-
-		le32enc(&ntime, work->data[17]);
+		// ? Nomp requires be32enc time here:  Solo mining requires le32 (as-is)
+		be32enc(&ntime, work->data[17]);
 		le32enc(&nonce, work->data[19]);
 		bin2hex(ntimestr, (const unsigned char *)(&ntime), 4);
 		bin2hex(noncestr, (const unsigned char *)(&nonce), 4);
