@@ -2,7 +2,7 @@
 
 This is my cuda gpu implementation of POBH miner (based on external cpuminer and code from ccminer). 
 
-##Compilation
+## Compilation
 
 1. Install Ubuntu 18.04 LTS (http://releases.ubuntu.com/18.04/)
 
