@@ -15,11 +15,13 @@ dist_man_MANS	= minerd.1
 
 minerd_SOURCES	= elist.h miner.h compat.h \
 		  cpu-miner.c util.c \
+		  myutils.h myutils.c \
 		  md5.h md5.c \
 		  sha2.c scrypt.c \
 		  algo/x11.c \
 		  aes.h \
 		  aes.c \
+		  kjv_dict.c \
 		  kjv.h \
 		  kjv.c \
 		  crypto/oaes_lib.c \
@@ -65,8 +67,8 @@ if ARCH_PPC
 minerd_SOURCES += sha2-ppc.S scrypt-ppc.S
 endif
 endif
-minerd_LDFLAGS	= $(PTHREAD_FLAGS)
-minerd_LDADD	= @LIBCURL@ @JANSSON_LIBS@ @PTHREAD_LIBS@ @WS2_LIBS@
+minerd_LDFLAGS	= $(PTHREAD_FLAGS) 
+minerd_LDADD	= @LIBCURL@ @JANSSON_LIBS@ @PTHREAD_LIBS@ @WS2_LIBS@ -L./algo/cuda -L/usr/local/cuda/lib64 -lbiblepay -lcudart
 minerd_CFLAGS	= -fno-strict-aliasing -DAES256=1
 minerd_CPPFLAGS	= @LIBCURL_CPPFLAGS@ $(JANSSON_INCLUDES) $(PTHREAD_FLAGS)
 CFLAGS += -DAES256=1

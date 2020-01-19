@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
+#include <unistd.h>
 
 #include "sha3/sph_blake.h"
 #include "sha3/sph_bmw.h"
@@ -16,6 +17,9 @@
 #include "sha3/sph_shavite.h"
 #include "sha3/sph_simd.h"
 #include "sha3/sph_echo.h"
+#include "myutils.h"
+
+
 extern bool fDebug;
 
 void x11hash(void *output, const void *input)
@@ -150,9 +154,17 @@ void printme(char *caption, uint32_t bufhash[])
 }
 
 
+uint32_t biblehash_v2_gpu(int gpu_device, int batchSize, uint8_t* hashes, char* begin, uint32_t startNonce, bool fLate);
+int biblehash_cuda_num_devices();
+
+
 #ifndef EXTERN_POBH2
 int scanhash_pobh2(int thr_id, uint32_t *pdata, const uint32_t *ptarget, uint32_t max_nonce, unsigned long *hashes_done)
-{
+{	
+	int num_devices = biblehash_cuda_num_devices();
+	int device_id = thr_id % num_devices;
+
+
 	uint32_t hash[8] __attribute__((aligned(128)));
 	uint32_t endiandata[20] __attribute__((aligned(128)));
 	const uint32_t first_nonce = pdata[19];
@@ -167,28 +179,41 @@ int scanhash_pobh2(int thr_id, uint32_t *pdata, const uint32_t *ptarget, uint32_
 	for (int k=0; k < 20; k++)
 		endiandata[k] = pdata[k];
 
+	const int batch_size = 2*16384;
+
+	uint8_t hashes[batch_size * 64];
+
+	int c = 0;
+
 	do 
 	{
-    	be32enc(&endiandata[19], nonce);
-		x11hash(hash, endiandata);
-		becencode(hash, hash_be);
-		ConvertH32TO8(hash_be, pobhhash);
-		BibleHashV2(pobhhash, fLate);
-	    R256b(pobhhash, pobhhash2);
-		ConvertH8TO32(pobhhash2, finalhash);
-		
-		if (fulltest(finalhash, ptarget)) 
+		uint32_t candidate_idx = biblehash_v2_gpu(device_id, batch_size, hashes, endiandata, nonce, fLate);
+
+
+		uint32_t next_nonce = nonce + batch_size;
+		if (candidate_idx != 0xffffffff)	
 		{
-			be32enc(&pdata[19], nonce);
-			if (opt_debug)
+			nonce = nonce + candidate_idx;
+			endiandata[19] = nonce;
+
+			memcpy(finalhash, hashes + candidate_idx * 64, 32 );
+
+			if (fulltest(finalhash, ptarget)) 
 			{
-				printme2("\n SOLUTION FOUND !!!! \nx11", hash);
-				printme2("bbphash\n", finalhash);
+				pdata[19] = nonce;
+				if (opt_debug)
+				{
+					printme2("\n SOLUTION FOUND !!!! \nx11", hash);
+					printme2("bbphash\n", finalhash);
+				}
+				*hashes_done = pdata[19] - first_nonce;
+				return 1;
 			}
-			*hashes_done = pdata[19] - first_nonce;
-			return 1;
+
 		}
-		nonce++;
+		nonce = next_nonce;
+
+
 	} while (nonce < max_nonce && !work_restart[thr_id].restart);
 
 	pdata[19] = nonce;
