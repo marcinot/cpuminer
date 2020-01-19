@@ -1,71 +1,86 @@
-This is a multi-threaded CPU miner for Litecoin and Bitcoin,
-fork of Jeff Garzik's reference cpuminer.
+# biblepay cuda/gpu miner
 
-License: GPLv2.  See COPYING for details.
+This is my cuda gpu implementation of POBH miner (based on external cpuminer and code from ccminer). 
 
-Downloads:  https://sourceforge.net/projects/cpuminer/files/
-Git tree:   https://github.com/pooler/cpuminer
+##Compilation
 
-Dependencies:
-	libcurl			http://curl.haxx.se/libcurl/
-	jansson			http://www.digip.org/jansson/
-		(jansson is included in-tree)
+1. Install Ubuntu 18.04 LTS (http://releases.ubuntu.com/18.04/)
 
-Basic *nix build instructions:
-	./autogen.sh	# only needed if building from git repo
-	./nomacro.pl	# in case the assembler doesn't support macros
-	./configure CFLAGS="-O3" # Make sure -O3 is an O and not a zero!
-	make
+2. Install nvidia drivers and CUDA toolkit
+```
+sudo apt update
+sudo apt install nvidia-driver-390
+sudo apt install nvidia-cuda-toolkit
+sudo reboot
+```
+You can also install newer cuda version from nvidia.
 
-Notes for AIX users:
-	* To build a 64-bit binary, export OBJECT_MODE=64
-	* GNU-style long options are not supported, but are accessible
-	  via configuration file
+3. Check if its correctly installed
+```
+nvcc --version
+nvidia-smi
+```
 
-Basic Windows build instructions, using MinGW:
-	Install MinGW and the MSYS Developer Tool Kit (http://www.mingw.org/)
-		* Make sure you have mstcpip.h in MinGW\include
-	If using MinGW-w64, install pthreads-w64
-	Install libcurl devel (http://curl.haxx.se/download.html)
-		* Make sure you have libcurl.m4 in MinGW\share\aclocal
-		* Make sure you have curl-config in MinGW\bin
-	In the MSYS shell, run:
-		./autogen.sh	# only needed if building from git repo
-		LIBCURL="-lcurldll" ./configure CFLAGS="-O3"
-		make
+3. Install dependencies
+```
+sudo apt install libcurl4-openssl-dev
+sudo apt install libgmp-dev
+```
 
-Architecture-specific notes:
-	ARM:	No runtime CPU detection. The miner can take advantage
-		of some instructions specific to ARMv5E and later processors,
-		but the decision whether to use them is made at compile time,
-		based on compiler-defined macros.
-		To use NEON instructions, add "-mfpu=neon" to CFLAGS.
-	PowerPC: No runtime CPU detection.
-		To use AltiVec instructions, add "-maltivec" to CFLAGS.
-	x86:	The miner checks for SSE2 instructions support at runtime,
-		and uses them if they are available.
-	x86-64:	The miner can take advantage of AVX, AVX2 and XOP instructions,
-		but only if both the CPU and the operating system support them.
-		    * Linux supports AVX starting from kernel version 2.6.30.
-		    * FreeBSD supports AVX starting with 9.1-RELEASE.
-		    * Mac OS X added AVX support in the 10.6.8 update.
-		    * Windows supports AVX starting from Windows 7 SP1 and
-		      Windows Server 2008 R2 SP1.
-		The configure script outputs a warning if the assembler
-		doesn't support some instruction sets. In that case, the miner
-		can still be built, but unavailable optimizations are left off.
-		The miner uses the VIA Padlock Hash Engine where available.
+4. Clone and compile
+```
+git clone https://github.com/marcinot/cpuminer.git
+cd cpuminer
+./compile.sh
+```
 
-Usage instructions:  Run "minerd --help" to see options.
+If you have errors try changing nvcc path in algo/cuda/Makefile or cuda libraries path in Makefile.am. Currently this paths are hardcoded.
 
-Connecting through a proxy:  Use the --proxy option.
-To use a SOCKS proxy, add a socks4:// or socks5:// prefix to the proxy host.
-Protocols socks4a and socks5h, allowing remote name resolving, are also
-available since libcurl 7.18.0.
-If no protocol is specified, the proxy is assumed to be a HTTP proxy.
-When the --proxy option is not used, the program honors the http_proxy
-and all_proxy environment variables.
 
-Also many issues and FAQs are covered in the forum thread
-dedicated to this program,
-	https://bitcointalk.org/index.php?topic=55038.0
+5. Test
+```
+./run.sh
+```
+
+You should get something like this (real example for one GTX 750)
+
+```
+KJV Loaded
+Using bbpminer version 1009
+
+solo mining 0
+[2020-01-20 00:29:47] 1 miner threads started, using 'pobh' algorithm.
+[2020-01-20 00:29:47] Starting Stratum on stratum+tcp://5.135.183.202:3016
+[2020-01-20 00:29:48] Stratum requested work restart
+[2020-01-20 00:29:51] thread 0: 2097153 hashes, 719.74 khash/s
+[2020-01-20 00:30:08] thread 0: 21572355 hashes, 1261 khash/s
+[2020-01-20 00:30:09] accepted: 1/1 (100.00%), 1261 khash/s (yay!!!)
+[2020-01-20 00:30:09] Stratum requested work restart
+[2020-01-20 00:30:09] thread 0: 786433 hashes, 1249 khash/s
+[2020-01-20 00:30:36] Stratum requested work restart
+[2020-01-20 00:30:36] thread 0: 35160065 hashes, 1261 khash/s
+[2020-01-20 00:30:40] Stratum requested work restart
+[2020-01-20 00:30:40] thread 0: 4947969 hashes, 1259 khash/s
+[2020-01-20 00:31:00] thread 0: 24126554 hashes, 1255 khash/s
+[2020-01-20 00:31:00] accepted: 2/2 (100.00%), 1255 khash/s (yay!!!)
+[2020-01-20 00:31:00] Stratum requested work restart
+[2020-01-20 00:31:00] thread 0: 131073 hashes, 1137 khash/s
+```
+
+## Use
+
+Configure parameters in run.sh file.
+
+1. Set threads to number of installed GPUs
+2. Set user, pool, password to your own
+3. Use high difficulty ports 
+
+Check pool settings here http://sunpool.whitewalr.us/getting_started 
+
+## Limitations
+
+- Probably will work only for a while (until hard fork) :-)
+- Doesn't work on old nvidia cards (required SM35 architecture or highier, check this http://arnon.dk/matching-sm-architectures-arch-and-gencode-for-various-nvidia-cards/)
+
+
+
