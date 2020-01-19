@@ -1,6 +1,6 @@
 # biblepay cuda/gpu miner
 
-This is my cuda gpu implementation of POBH miner (based on external cpuminer and code from ccminer). 
+This is my cuda gpu implementation of POBH miner (forked from https://github.com/biblepay/cpuminer and uses code from https://github.com/tpruvot/ccminer). 
 
 ## Compilation
 
